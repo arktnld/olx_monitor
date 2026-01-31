@@ -8,13 +8,15 @@ from components.ad_modal import AdModal
 class HistoryPage:
     def __init__(self):
         self.container = None
+        self.button_container = None
         self.modal = AdModal(on_update=self.refresh)
         self.min_price = None
         self.max_price = None
         self.state = None
         self.search_text = None
-        self.check_button = None
         self.check_timer = None
+        self.is_checking = False
+        self.last_result = None
 
     def create(self):
         with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-4'):
@@ -22,11 +24,29 @@ class HistoryPage:
                 with ui.column().classes('gap-0'):
                     ui.label('Histórico').classes('text-2xl font-bold')
                     ui.label('Anúncios que foram desativados ou expiraram').classes('text-sm text-gray-500')
-                self._create_check_button()
+                self.button_container = ui.element('div')
+                self._rebuild_button()
             self._create_search_box()
             self._create_filters()
             self.container = ui.element('div').classes('w-full')
             self.refresh()
+
+    def _rebuild_button(self):
+        """Recria o botão baseado no estado atual"""
+        if not self.button_container:
+            return
+        self.button_container.clear()
+        with self.button_container:
+            if self.is_checking:
+                ui.button('Verificando...', icon='fact_check').props('loading outline color=primary rounded disable')
+            elif self.last_result:
+                deactivated = self.last_result.get('deactivated', 0)
+                if deactivated > 0:
+                    ui.button(f'{deactivated} inativos!', icon='fact_check', on_click=self._on_check_click).props('outline color=primary rounded')
+                else:
+                    ui.button('Verificar Status', icon='fact_check', on_click=self._on_check_click).props('outline color=primary rounded')
+            else:
+                ui.button('Verificar Status', icon='fact_check', on_click=self._on_check_click).props('outline color=primary rounded')
 
     def _create_search_box(self):
         with ui.row().classes('w-full gap-2 items-center'):
@@ -92,13 +112,6 @@ class HistoryPage:
         self.search_input.set_value('')
         self.refresh()
 
-    def _create_check_button(self):
-        self.check_button = ui.button(
-            'Verificar Status',
-            icon='fact_check',
-            on_click=self._on_check_click
-        ).props('outline color=primary rounded')
-
     def _on_check_click(self):
         status = get_task_status('status_check')
         if status['running']:
@@ -110,9 +123,9 @@ class HistoryPage:
             ui.notify('Não foi possível iniciar a verificação', type='negative')
             return
 
-        self.check_button.disable()
-        self.check_button.props('loading')
-        self.check_button.text = 'Verificando...'
+        self.is_checking = True
+        self.last_result = None
+        self._rebuild_button()
         self.check_timer = ui.timer(1.0, self._check_progress)
 
     def _check_progress(self):
@@ -122,22 +135,21 @@ class HistoryPage:
                 self.check_timer.cancel()
                 self.check_timer = None
 
-            self.check_button.props(remove='loading')
-            self.check_button.enable()
-
+            self.is_checking = False
             result = status['result']
+
             if result and result.get('success'):
+                self.last_result = result
                 deactivated = result.get('deactivated', 0)
                 if deactivated > 0:
-                    self.check_button.text = f'{deactivated} inativos!'
                     ui.notify(f'{deactivated} anúncios marcados como inativos!', type='warning')
                 else:
-                    self.check_button.text = 'Verificar Status'
                     ui.notify('Nenhum anúncio inativo encontrado', type='info')
                 self.refresh()
             elif result:
-                self.check_button.text = 'Erro!'
                 ui.notify('Erro ao verificar status', type='negative')
+
+            self._rebuild_button()
 
     def refresh(self):
         if self.container:

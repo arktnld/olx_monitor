@@ -13,17 +13,19 @@ class HomePage:
     def __init__(self):
         self.ads_container = None
         self.tabs_container = None
+        self.button_container = None
         self.modal = AdModal(on_update=self.refresh)
         self.filters = Filters(on_filter_change=self._on_filter_change)
         self.selected_search_id = None
         self.current_filters = {}
         self.tab_buttons = {}
-        self.update_button = None
         self.update_timer = None
         self.current_offset = 0
         self.total_count = 0
         self.loaded_ads = []
         self.load_more_container = None
+        self.is_updating = False
+        self.last_result = None
 
     def create(self):
         with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-4'):
@@ -37,54 +39,63 @@ class HomePage:
             self.load_more_container = ui.element('div').classes('w-full flex justify-center py-4')
             self.refresh()
 
+    def _rebuild_button(self):
+        """Recria o botão baseado no estado atual"""
+        if not self.button_container:
+            return
+        self.button_container.clear()
+        with self.button_container:
+            if self.is_updating:
+                ui.button('Buscando...', icon='refresh').props('loading outline color=primary rounded disable')
+            elif self.last_result:
+                total = self.last_result.get('total_new', 0)
+                if total > 0:
+                    ui.button(f'+{total} novos!', icon='refresh', on_click=self._on_update_click).props('outline color=primary rounded')
+                else:
+                    ui.button('Atualizar', icon='refresh', on_click=self._on_update_click).props('outline color=primary rounded')
+            else:
+                ui.button('Atualizar', icon='refresh', on_click=self._on_update_click).props('outline color=primary rounded')
+
     def _on_update_click(self):
         status = get_task_status('search')
         if status['running']:
             ui.notify('Busca já está em execução', type='warning')
             return
 
-        # Iniciar busca
         started = run_search_now()
         if not started:
             ui.notify('Não foi possível iniciar a busca', type='negative')
             return
 
-        # Atualizar UI - mostrar loading no botão
-        self.update_button.disable()
-        self.update_button.props('loading')
-        self.update_button.text = 'Buscando...'
-
-        # Criar timer para verificar progresso
+        self.is_updating = True
+        self.last_result = None
+        self._rebuild_button()
         self.update_timer = ui.timer(1.0, self._check_update_progress)
 
     def _check_update_progress(self):
         status = get_task_status('search')
 
         if not status['running']:
-            # Busca terminou
             if self.update_timer:
                 self.update_timer.cancel()
                 self.update_timer = None
 
-            self.update_button.props(remove='loading')
-            self.update_button.enable()
-
+            self.is_updating = False
             result = status['result']
+
             if result and result.get('success'):
+                self.last_result = result
                 total = result.get('total_new', 0)
                 if total > 0:
-                    self.update_button.text = f'+{total} novos!'
                     ui.notify(f'{total} novos anúncios encontrados!', type='positive')
                 else:
-                    self.update_button.text = 'Atualizar'
                     ui.notify('Nenhum anúncio novo encontrado', type='info')
-
-                # Atualizar a lista
                 self.refresh()
                 self._refresh_tabs()
             elif result:
-                self.update_button.text = 'Erro!'
                 ui.notify('Erro ao buscar anúncios', type='negative')
+
+            self._rebuild_button()
 
     def _refresh_tabs(self):
         """Recarrega as tabs com as novas contagens"""
@@ -102,7 +113,8 @@ class HomePage:
         with ui.expansion('Buscas', icon='search').classes('w-full rounded-xl overflow-hidden').props('dense header-class="text-weight-medium"'):
             with ui.row().classes('w-full flex-wrap gap-2 items-center py-2'):
                 # Botão de atualizar
-                self._create_update_button()
+                self.button_container = ui.element('div')
+                self._rebuild_button()
 
                 # Separador visual
                 ui.element('div').classes('w-px h-6 bg-gray-300 mx-1')
@@ -116,13 +128,6 @@ class HomePage:
                         name = search_data['name']
                         count = counts.get(search_id, 0)
                         self._create_tab_button(search_id, name, count)
-
-    def _create_update_button(self):
-        self.update_button = ui.button(
-            'Atualizar',
-            icon='refresh',
-            on_click=self._on_update_click
-        ).props('outline color=primary rounded')
 
     def _create_tab_button(self, search_id, name: str, count: int):
         is_selected = self.selected_search_id == search_id

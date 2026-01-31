@@ -8,21 +8,41 @@ from components.ad_modal import AdModal
 class WatchingPage:
     def __init__(self):
         self.container = None
+        self.button_container = None
         self.modal = AdModal(on_update=self.refresh)
         self.min_price = None
         self.max_price = None
         self.state = None
-        self.check_button = None
         self.check_timer = None
+        self.is_checking = False
+        self.last_result = None
 
     def create(self):
         with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-4'):
             with ui.row().classes('w-full justify-between items-center'):
                 ui.label('Acompanhando').classes('text-2xl font-bold')
-                self._create_check_button()
+                self.button_container = ui.element('div')
+                self._rebuild_button()
             self._create_filters()
             self.container = ui.element('div').classes('w-full')
             self.refresh()
+
+    def _rebuild_button(self):
+        """Recria o botão baseado no estado atual"""
+        if not self.button_container:
+            return
+        self.button_container.clear()
+        with self.button_container:
+            if self.is_checking:
+                ui.button('Verificando...', icon='price_check').props('loading outline color=primary rounded disable')
+            elif self.last_result:
+                changes = self.last_result.get('price_changes', 0)
+                if changes > 0:
+                    ui.button(f'{changes} alterados!', icon='price_check', on_click=self._on_check_click).props('outline color=primary rounded')
+                else:
+                    ui.button('Verificar Preços', icon='price_check', on_click=self._on_check_click).props('outline color=primary rounded')
+            else:
+                ui.button('Verificar Preços', icon='price_check', on_click=self._on_check_click).props('outline color=primary rounded')
 
     def _create_filters(self):
         states = get_distinct_states()
@@ -74,13 +94,6 @@ class WatchingPage:
         self.state_select.set_value(None)
         self.refresh()
 
-    def _create_check_button(self):
-        self.check_button = ui.button(
-            'Verificar Preços',
-            icon='price_check',
-            on_click=self._on_check_click
-        ).props('outline color=primary rounded')
-
     def _on_check_click(self):
         status = get_task_status('price_check')
         if status['running']:
@@ -92,9 +105,9 @@ class WatchingPage:
             ui.notify('Não foi possível iniciar a verificação', type='negative')
             return
 
-        self.check_button.disable()
-        self.check_button.props('loading')
-        self.check_button.text = 'Verificando...'
+        self.is_checking = True
+        self.last_result = None
+        self._rebuild_button()
         self.check_timer = ui.timer(1.0, self._check_progress)
 
     def _check_progress(self):
@@ -104,22 +117,21 @@ class WatchingPage:
                 self.check_timer.cancel()
                 self.check_timer = None
 
-            self.check_button.props(remove='loading')
-            self.check_button.enable()
-
+            self.is_checking = False
             result = status['result']
+
             if result and result.get('success'):
+                self.last_result = result
                 changes = result.get('price_changes', 0)
                 if changes > 0:
-                    self.check_button.text = f'{changes} alterados!'
                     ui.notify(f'{changes} alterações de preço encontradas!', type='positive')
                 else:
-                    self.check_button.text = 'Verificar Preços'
                     ui.notify('Nenhuma alteração de preço', type='info')
                 self.refresh()
             elif result:
-                self.check_button.text = 'Erro!'
                 ui.notify('Erro ao verificar preços', type='negative')
+
+            self._rebuild_button()
 
     def refresh(self):
         if self.container:

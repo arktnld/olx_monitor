@@ -120,12 +120,6 @@ async def job_search_new_ads_async():
     """Async version of job_search_new_ads"""
     global running_tasks, task_results
 
-    if running_tasks['search']:
-        add_log("Busca já está em execução", "warning")
-        return
-
-    running_tasks['search'] = True
-    task_results['search'] = None
     add_log("Iniciando busca por novos anúncios...")
 
     try:
@@ -175,7 +169,6 @@ async def job_search_new_ads_async():
         add_log(f"Erro na busca: {e}", "error")
         task_results['search'] = {'success': False, 'error': str(e)}
     finally:
-        running_tasks['search'] = False
         await scraper.close()
 
 
@@ -183,12 +176,6 @@ async def job_check_prices_async():
     """Async version of job_check_prices"""
     global running_tasks, task_results
 
-    if running_tasks['price_check']:
-        add_log("Verificação de preços já está em execução", "warning")
-        return
-
-    running_tasks['price_check'] = True
-    task_results['price_check'] = None
     add_log("Verificando preços dos anúncios acompanhados...")
 
     try:
@@ -232,7 +219,6 @@ async def job_check_prices_async():
         add_log(f"Erro na verificação de preços: {e}", "error")
         task_results['price_check'] = {'success': False, 'error': str(e)}
     finally:
-        running_tasks['price_check'] = False
         await scraper.close()
 
 
@@ -240,12 +226,6 @@ async def job_check_ad_status_async():
     """Async version of job_check_ad_status"""
     global running_tasks, task_results
 
-    if running_tasks['status_check']:
-        add_log("Verificação de status já está em execução", "warning")
-        return
-
-    running_tasks['status_check'] = True
-    task_results['status_check'] = None
     add_log("Verificando status dos anúncios...")
 
     try:
@@ -283,23 +263,46 @@ async def job_check_ad_status_async():
         add_log(f"Erro na verificação de status: {e}", "error")
         task_results['status_check'] = {'success': False, 'error': str(e)}
     finally:
-        running_tasks['status_check'] = False
         await scraper.close()
 
 
 def job_search_new_ads():
     """Wrapper to run async job in sync context"""
-    asyncio.run(job_search_new_ads_async())
+    global running_tasks, task_results
+    # Se chamado pelo scheduler (não via run_*_now), seta a flag
+    if not running_tasks['search']:
+        running_tasks['search'] = True
+        task_results['search'] = None
+    try:
+        asyncio.run(job_search_new_ads_async())
+    finally:
+        running_tasks['search'] = False
 
 
 def job_check_prices():
     """Wrapper to run async job in sync context"""
-    asyncio.run(job_check_prices_async())
+    global running_tasks, task_results
+    # Se chamado pelo scheduler (não via run_*_now), seta a flag
+    if not running_tasks['price_check']:
+        running_tasks['price_check'] = True
+        task_results['price_check'] = None
+    try:
+        asyncio.run(job_check_prices_async())
+    finally:
+        running_tasks['price_check'] = False
 
 
 def job_check_ad_status():
     """Wrapper to run async job in sync context"""
-    asyncio.run(job_check_ad_status_async())
+    global running_tasks, task_results
+    # Se chamado pelo scheduler (não via run_*_now), seta a flag
+    if not running_tasks['status_check']:
+        running_tasks['status_check'] = True
+        task_results['status_check'] = None
+    try:
+        asyncio.run(job_check_ad_status_async())
+    finally:
+        running_tasks['status_check'] = False
 
 
 def start_scheduler():
@@ -351,6 +354,8 @@ def run_search_now():
     """Executa busca em thread separada (não bloqueia a UI)"""
     if running_tasks['search']:
         return False
+    running_tasks['search'] = True
+    task_results['search'] = None
     thread = threading.Thread(target=job_search_new_ads, daemon=True)
     thread.start()
     return True
@@ -360,6 +365,8 @@ def run_price_check_now():
     """Executa verificação de preços em thread separada"""
     if running_tasks['price_check']:
         return False
+    running_tasks['price_check'] = True
+    task_results['price_check'] = None
     thread = threading.Thread(target=job_check_prices, daemon=True)
     thread.start()
     return True
@@ -369,6 +376,8 @@ def run_status_check_now():
     """Executa verificação de status em thread separada"""
     if running_tasks['status_check']:
         return False
+    running_tasks['status_check'] = True
+    task_results['status_check'] = None
     thread = threading.Thread(target=job_check_ad_status, daemon=True)
     thread.start()
     return True

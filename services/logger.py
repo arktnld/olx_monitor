@@ -98,7 +98,9 @@ def get_logger(name: str = "olx_monitor") -> logging.Logger:
     """Get or create a logger instance"""
     logger = logging.getLogger(name)
     if not logger.handlers:
-        return setup_logger(name)
+        setup_logger(name)
+    # Evita duplicação: não propagar para loggers pai
+    logger.propagate = False
     return logger
 
 
