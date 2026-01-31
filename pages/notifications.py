@@ -1,5 +1,7 @@
 from nicegui import ui
-from services.database import get_notification_history, mark_notifications_read
+from models import Ad
+from services.database import get_notification_history, mark_notifications_read, get_ad_by_id
+from components.ad_modal import AdModal
 
 
 class NotificationsPage:
@@ -11,6 +13,7 @@ class NotificationsPage:
         self.load_more_btn = None
         self.offset = 0
         self.has_more = True
+        self.modal = AdModal()
 
     def create(self):
         # Marcar todas como lidas ao entrar na página
@@ -134,6 +137,23 @@ class NotificationsPage:
             self.load_more_btn = None
         self._load_notifications()
 
+    def _open_ad(self, notif: dict):
+        """Abre o modal com detalhes do anúncio"""
+        ad_id = notif.get('ad_id')
+        if ad_id:
+            ad_data = get_ad_by_id(ad_id)
+            if ad_data:
+                ad = Ad.from_dict(ad_data)
+                self.modal.show(ad)
+                return
+
+        # Se não tem ad_id ou anúncio não existe mais, abre o link externo
+        url = notif.get('url')
+        if url:
+            ui.navigate.to(url, new_tab=True)
+        else:
+            ui.notify('Anúncio não encontrado', type='warning')
+
     def _create_notification_card(self, notif: dict):
         type_config = {
             'cheap_ad': {
@@ -159,7 +179,8 @@ class NotificationsPage:
             'label': notif['type']
         })
 
-        with ui.card().classes('w-full p-3 rounded-xl'):
+        card_classes = 'w-full p-3 rounded-xl cursor-pointer hover:shadow-lg transition-shadow'
+        with ui.card().classes(card_classes).on('click', lambda n=notif: self._open_ad(n)):
             with ui.row().classes('w-full items-start gap-3'):
                 # Imagem do anúncio
                 if notif.get('image'):
@@ -194,6 +215,9 @@ class NotificationsPage:
                     # Data
                     ui.label(notif.get('sent_at', '')).classes('text-xs text-gray-400')
 
-                # Link
+                # Link externo (para no click event)
                 if notif.get('url'):
-                    ui.button(icon='open_in_new', on_click=lambda u=notif['url']: ui.navigate.to(u, new_tab=True)).props('flat round dense')
+                    def open_external(e, u=notif['url']):
+                        e.stop_propagation = True
+                        ui.navigate.to(u, new_tab=True)
+                    ui.button(icon='open_in_new', on_click=open_external).props('flat round dense')
