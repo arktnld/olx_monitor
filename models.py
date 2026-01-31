@@ -65,6 +65,7 @@ class Ad:
     seen: bool = False
     watching: bool = False
     status: str = "active"
+    cheap_threshold: Optional[float] = None  # Threshold da busca que encontrou o anúncio
 
     @classmethod
     def from_dict(cls, data: dict) -> "Ad":
@@ -96,8 +97,20 @@ class Ad:
             deactivated_at=data.get("deactivated_at"),
             seen=bool(data.get("seen", False)),
             watching=bool(data.get("watching", False)),
-            status=data.get("status", "active")
+            status=data.get("status", "active"),
+            cheap_threshold=data.get("cheap_threshold")
         )
+
+    @property
+    def is_cheap(self) -> bool:
+        """Verifica se o preço está abaixo do threshold da busca"""
+        if not self.cheap_threshold:
+            return False
+        try:
+            price = parse_price_to_float(self.price)
+            return price <= self.cheap_threshold
+        except:
+            return False
 
     @property
     def location(self) -> str:
@@ -200,21 +213,6 @@ def parse_price_to_float(price_str: str) -> float:
         return float(cleaned)
     except:
         return 0.0
-
-
-def get_price_color(price_str: str) -> str:
-    """Retorna a classe de cor baseada no preço:
-    - Acima de 200: verde
-    - Entre 100 e 200: laranja
-    - Abaixo de 100: vermelho
-    """
-    price = parse_price_to_float(price_str)
-    if price >= 200:
-        return 'text-green-600'
-    elif price >= 100:
-        return 'text-orange-500'
-    else:
-        return 'text-red-500'
 
 
 def calculate_price_variation(history: list[PriceHistory]) -> tuple[float, str]:

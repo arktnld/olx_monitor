@@ -115,6 +115,7 @@ def in_memory_db():
             watching BOOLEAN DEFAULT 0,
             status TEXT DEFAULT 'active',
             deactivated_at DATETIME,
+            cheap_threshold REAL,
             FOREIGN KEY (search_id) REFERENCES searches(id)
         )
     """)
@@ -156,6 +157,25 @@ def in_memory_db():
             p256dh TEXT,
             auth TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE notification_history (
+            id INTEGER PRIMARY KEY,
+            type TEXT NOT NULL,
+            ad_id INTEGER,
+            title TEXT,
+            price TEXT,
+            old_price TEXT,
+            target_price REAL,
+            url TEXT,
+            image TEXT,
+            search_name TEXT,
+            sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            success INTEGER DEFAULT 1,
+            read_at DATETIME,
+            FOREIGN KEY (ad_id) REFERENCES ads(id)
         )
     """)
 

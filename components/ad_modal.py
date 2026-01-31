@@ -1,13 +1,9 @@
 from nicegui import ui, background_tasks
-from models import Ad, PriceHistory, calculate_price_variation, get_price_color
+from models import Ad, PriceHistory, calculate_price_variation
 from components.lightbox import lightbox
-from services.database import (
-    toggle_ad_watching, mark_ad_seen, get_price_history, update_ad_status,
-    get_price_alert, create_price_alert, delete_price_alert
-)
+from services.database import toggle_ad_watching, mark_ad_seen, get_price_history, update_ad_status
 from services.scraper import OlxScraper
 from services.delivery import get_delivery_quote_async, DeliveryQuote
-from services.validators import validate_price_alert, ValidationError
 import re
 
 
@@ -25,7 +21,6 @@ class AdModal:
         self.status_container = None
         self.delivery_container = None
         self.inactive_banner = None
-        self.alert_container = None
 
     def _extract_list_id(self, url: str) -> int | None:
         """Extrai o list_id da URL do anúncio"""
@@ -203,10 +198,12 @@ class AdModal:
                         if is_inactive:
                             price_classes += ' text-gray-500 line-through'
                         else:
-                            price_classes += f' {get_price_color(ad.price)}'
+                            price_classes += ' text-green-600'
                         ui.label(f'R$ {ad.price}').classes(price_classes)
 
                         if not is_inactive:
+                            if ad.is_cheap:
+                                ui.badge('Preço Baixo').props('color=orange')
                             if ad.olx_pay:
                                 ui.badge('OLXPay').props('color=green')
                             if ad.olx_delivery:
@@ -248,9 +245,6 @@ class AdModal:
                                         last_check = history[-1].checked_at if history else None
                                         if last_check:
                                             ui.label(f'Última verificação: {last_check}').classes('text-xs text-gray-400')
-
-                        # Price alert UI
-                        self._render_price_alert_ui(ad)
 
                     ui.separator().classes('w-full')
 
@@ -372,115 +366,3 @@ class AdModal:
                 self.watch_btn.text = 'Acompanhar'
                 self.watch_btn._props['icon'] = 'visibility'
             self.watch_btn.update()
-
-    def _render_price_alert_ui(self, ad: Ad):
-        """Render price alert configuration UI"""
-        if ad.id is None:
-            return
-
-        existing_alert = get_price_alert(ad.id)
-
-        self.alert_container = ui.element('div').classes('w-full mt-2')
-        with self.alert_container:
-            with ui.card().classes('w-full bg-amber-50 rounded-xl'):
-                with ui.column().classes('p-3 gap-2'):
-                    with ui.row().classes('items-center gap-2'):
-                        ui.icon('notifications', size='sm').classes('text-amber-600')
-                        ui.label('Alerta de Preço').classes('font-semibold text-amber-800')
-
-                    if existing_alert and existing_alert.get('active'):
-                        # Show existing alert
-                        target = existing_alert['target_price']
-                        triggered = existing_alert.get('triggered_at')
-
-                        with ui.row().classes('items-center gap-4'):
-                            ui.label(f'Alertar quando preço ≤ R$ {target:.2f}').classes('text-sm')
-                            if triggered:
-                                ui.badge('Disparado').props('color=green')
-
-                        with ui.row().classes('gap-2'):
-                            ui.button(
-                                'Remover alerta',
-                                icon='delete',
-                                on_click=lambda: self._remove_alert(ad.id)
-                            ).props('flat dense color=negative')
-                    else:
-                        # Show form to create alert
-                        with ui.row().classes('items-end gap-2 w-full'):
-                            price_input = ui.input(
-                                'Alertar quando preço ≤',
-                                placeholder='100,00'
-                            ).props('outlined dense').classes('flex-1')
-
-                            ui.button(
-                                'Criar alerta',
-                                icon='add_alert',
-                                on_click=lambda: self._create_alert(ad.id, price_input.value)
-                            ).props('color=amber dense')
-
-    def _create_alert(self, ad_id: int, target_price_str: str):
-        """Create a price alert"""
-        try:
-            target_price = validate_price_alert(target_price_str)
-            create_price_alert(ad_id, target_price, notify_below=True)
-            ui.notify('Alerta de preço criado!', type='positive')
-
-            # Refresh alert UI
-            if self.alert_container and self.current_ad:
-                self.alert_container.clear()
-                with self.alert_container:
-                    self._render_price_alert_content(self.current_ad)
-        except ValidationError as e:
-            ui.notify(str(e), type='negative')
-
-    def _remove_alert(self, ad_id: int):
-        """Remove a price alert"""
-        delete_price_alert(ad_id)
-        ui.notify('Alerta removido', type='info')
-
-        # Refresh alert UI
-        if self.alert_container and self.current_ad:
-            self.alert_container.clear()
-            with self.alert_container:
-                self._render_price_alert_content(self.current_ad)
-
-    def _render_price_alert_content(self, ad: Ad):
-        """Re-render just the alert content"""
-        if ad.id is None:
-            return
-
-        existing_alert = get_price_alert(ad.id)
-
-        with ui.card().classes('w-full bg-amber-50 rounded-xl'):
-            with ui.column().classes('p-3 gap-2'):
-                with ui.row().classes('items-center gap-2'):
-                    ui.icon('notifications', size='sm').classes('text-amber-600')
-                    ui.label('Alerta de Preço').classes('font-semibold text-amber-800')
-
-                if existing_alert and existing_alert.get('active'):
-                    target = existing_alert['target_price']
-                    triggered = existing_alert.get('triggered_at')
-
-                    with ui.row().classes('items-center gap-4'):
-                        ui.label(f'Alertar quando preço ≤ R$ {target:.2f}').classes('text-sm')
-                        if triggered:
-                            ui.badge('Disparado').props('color=green')
-
-                    with ui.row().classes('gap-2'):
-                        ui.button(
-                            'Remover alerta',
-                            icon='delete',
-                            on_click=lambda: self._remove_alert(ad.id)
-                        ).props('flat dense color=negative')
-                else:
-                    with ui.row().classes('items-end gap-2 w-full'):
-                        price_input = ui.input(
-                            'Alertar quando preço ≤',
-                            placeholder='100,00'
-                        ).props('outlined dense').classes('flex-1')
-
-                        ui.button(
-                            'Criar alerta',
-                            icon='add_alert',
-                            on_click=lambda: self._create_alert(ad.id, price_input.value)
-                        ).props('color=amber dense')

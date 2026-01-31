@@ -1,4 +1,5 @@
 from nicegui import ui
+from services.database import get_unread_notification_count
 
 
 def _nav_button_desktop(label: str, icon: str, path: str):
@@ -14,48 +15,23 @@ def _nav_button_mobile(label: str, icon: str, path: str):
 
 
 def _notification_button():
-    """Button to enable push notifications (desktop)"""
-    with ui.button().props('flat round dense').classes('text-gray-500 hover:text-amber-500') as btn:
+    """Button with badge for notifications (desktop)"""
+    count = get_unread_notification_count()
+    with ui.button(on_click=lambda: ui.navigate.to('/notifications')).props('flat round dense').classes('text-gray-500 hover:text-amber-500') as btn:
         ui.icon('notifications', size='sm')
-    btn.tooltip('Ativar notificações')
-    _attach_notification_handler(btn)
+        if count > 0:
+            ui.badge(str(count)).props('color=red floating')
+    btn.tooltip('Notificações')
 
 
 def _notification_button_mobile():
-    """Button to enable push notifications (mobile)"""
-    with ui.column().classes('items-center gap-0 cursor-pointer min-w-[60px]') as container:
-        ui.icon('notifications', size='sm').classes('text-gray-600')
-        ui.label('Notif.').classes('text-xs text-gray-600')
-    _attach_notification_handler(container)
-
-
-def _attach_notification_handler(element):
-    """Attach notification permission handler to element"""
-    element.on('click', lambda: ui.run_javascript('''
-        (async () => {
-            if (!('Notification' in window)) {
-                alert('Este navegador não suporta notificações');
-                return;
-            }
-
-            if (Notification.permission === 'granted') {
-                alert('Notificações já estão ativadas!');
-                return;
-            }
-
-            if (Notification.permission === 'denied') {
-                alert('Notificações foram bloqueadas. Ative nas configurações do navegador.');
-                return;
-            }
-
-            const result = await window.requestNotificationPermission();
-            if (result) {
-                alert('Notificações ativadas com sucesso!');
-            } else {
-                alert('Não foi possível ativar notificações.');
-            }
-        })();
-    '''))
+    """Button with badge for notifications (mobile)"""
+    count = get_unread_notification_count()
+    with ui.column().classes('items-center gap-0 cursor-pointer min-w-[60px]').on('click', lambda: ui.navigate.to('/notifications')):
+        with ui.element('div').classes('relative'):
+            ui.icon('notifications', size='sm').classes('text-gray-600')
+            if count > 0:
+                ui.badge(str(count)).props('color=red floating')
 
 
 def create_navbar():

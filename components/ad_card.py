@@ -1,5 +1,5 @@
 from nicegui import ui
-from models import Ad, get_price_color
+from models import Ad
 
 
 def create_ad_card(ad: Ad, on_click):
@@ -24,14 +24,16 @@ def create_ad_card(ad: Ad, on_click):
                 if is_inactive:
                     price_classes += ' text-gray-500 line-through'
                 else:
-                    price_classes += f' {get_price_color(ad.price)}'
+                    price_classes += ' text-green-600'
                 ui.label(f'R$ {ad.price}').classes(price_classes)
 
                 if is_inactive:
                     ui.badge('Inativo').props('color=red dense')
-                else:
-                    if ad.olx_delivery:
-                        ui.label('📦')
+                elif ad.is_cheap:
+                    ui.badge('Preço Baixo').props('color=orange dense')
+
+                if not is_inactive and ad.olx_delivery:
+                    ui.label('📦')
 
             ui.label(ad.title).classes('text-xs sm:text-sm line-clamp-2')
             ui.label(f'{ad.municipality}, {ad.state.replace("#", "")}').classes('text-xs text-gray-500 truncate')

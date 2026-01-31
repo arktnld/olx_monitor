@@ -73,6 +73,8 @@ def init_db():
             cursor.execute("ALTER TABLE ads ADD COLUMN status TEXT DEFAULT 'active'")
         if 'deactivated_at' not in columns:
             cursor.execute("ALTER TABLE ads ADD COLUMN deactivated_at DATETIME")
+        if 'cheap_threshold' not in columns:
+            cursor.execute("ALTER TABLE ads ADD COLUMN cheap_threshold REAL")
 
         # Migration: add location/category columns to searches if not exist
         cursor.execute("PRAGMA table_info(searches)")
@@ -127,6 +129,31 @@ def init_db():
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS notification_history (
+                id INTEGER PRIMARY KEY,
+                type TEXT NOT NULL,
+                ad_id INTEGER,
+                title TEXT,
+                price TEXT,
+                old_price TEXT,
+                target_price REAL,
+                url TEXT,
+                image TEXT,
+                search_name TEXT,
+                sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                success INTEGER DEFAULT 1,
+                read_at DATETIME,
+                FOREIGN KEY (ad_id) REFERENCES ads(id)
+            )
+        """)
+
+        # Migration: add read_at column to notification_history if not exist
+        cursor.execute("PRAGMA table_info(notification_history)")
+        notif_columns = [col[1] for col in cursor.fetchall()]
+        if 'read_at' not in notif_columns:
+            cursor.execute("ALTER TABLE notification_history ADD COLUMN read_at DATETIME")
 
         # Create indexes for better query performance
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_search_id ON ads(search_id)")
@@ -341,18 +368,18 @@ def create_ad(url: str, title: str, price: str, description: str, state: str,
               municipality: str, neighbourhood: str, zipcode: str, seller: str,
               condition: str, published_at: str, main_category: str, sub_category: str,
               hobbie_type: str, images: list, olx_pay: bool, olx_delivery: bool,
-              search_id: int):
+              search_id: int, cheap_threshold: float = None):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO ads (url, title, price, description, state, municipality,
                            neighbourhood, zipcode, seller, condition, published_at,
                            main_category, sub_category, hobbie_type, images,
-                           olx_pay, olx_delivery, search_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           olx_pay, olx_delivery, search_id, cheap_threshold)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (url, title, price, description, state, municipality, neighbourhood,
               zipcode, seller, condition, published_at, main_category, sub_category,
-              hobbie_type, json.dumps(images), olx_pay, olx_delivery, search_id))
+              hobbie_type, json.dumps(images), olx_pay, olx_delivery, search_id, cheap_threshold))
         conn.commit()
         return cursor.lastrowid
 
@@ -680,3 +707,61 @@ def delete_push_subscription(endpoint: str):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
         conn.commit()
+
+
+# ==================== NOTIFICATION HISTORY ====================
+
+def save_notification(
+    notification_type: str,
+    title: str,
+    price: str,
+    url: str,
+    ad_id: int = None,
+    old_price: str = None,
+    target_price: float = None,
+    image: str = None,
+    search_name: str = None,
+    success: bool = True
+):
+    """Save a notification to history"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO notification_history
+            (type, ad_id, title, price, old_price, target_price, url, image, search_name, success)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (notification_type, ad_id, title, price, old_price, target_price, url, image, search_name, 1 if success else 0))
+        conn.commit()
+
+
+def get_notification_history(limit: int = 20, offset: int = 0):
+    """Get notification history with pagination"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM notification_history
+            ORDER BY sent_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_unread_notification_count() -> int:
+    """Get count of unread notifications"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM notification_history WHERE read_at IS NULL")
+        return cursor.fetchone()[0]
+
+
+def mark_notifications_read():
+    """Mark all notifications as read"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE notification_history
+            SET read_at = CURRENT_TIMESTAMP
+            WHERE read_at IS NULL
+        """)
+        conn.commit()
+        return cursor.rowcount

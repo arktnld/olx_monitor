@@ -6,17 +6,17 @@
 
 | Total de Testes | Tempo de Execução | Cobertura Geral |
 |-----------------|-------------------|-----------------|
-| 158 | ~4.34s | 70% |
+| 158 | ~4.17s | 69% |
 
 ## Cobertura por Módulo
 
 | Módulo | Cobertura | Status | Importância |
 |--------|-----------|--------|-------------|
-| scheduler.py | 67% | 🟡 | 🔴 Crítico - coração da aplicação |
+| scheduler.py | 73% | 🟡 | 🔴 Crítico - coração da aplicação |
 | scraper.py | 53% | 🟡 | 🔴 Crítico - parsing do OLX |
-| database.py | 75% | ✅ | 🟡 Médio - queries e persistência |
+| database.py | 69% | 🟡 | 🟡 Médio - queries e persistência |
 | validators.py | 84% | ✅ | 🟡 Médio - validação de inputs |
-| notifications.py | 78% | ✅ | 🟡 Médio - push notifications |
+| notifications.py | 73% | 🟡 | 🟡 Médio - push notifications |
 | logger.py | 73% | 🟡 | 🟢 Baixo - logging |
 | exceptions.py | 100% | ✅ | 🟢 Baixo - exceções customizadas |
 | delivery.py | 96% | ✅ | 🟢 Baixo - feature secundária |

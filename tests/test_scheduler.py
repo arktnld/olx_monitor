@@ -242,9 +242,9 @@ class TestJobCheckPricesAsync:
     @patch('services.scheduler.get_last_price_check')
     @patch('services.scheduler.add_price_history')
     @patch('services.scheduler.update_ad_price')
-    @patch('services.scheduler._check_price_alerts')
+    @patch('services.scheduler.notify_price_drop')
     async def test_job_detects_price_changes(
-        self, mock_alerts, mock_update, mock_history, mock_last, mock_scraper, mock_watching
+        self, mock_notify, mock_update, mock_history, mock_last, mock_scraper, mock_watching
     ):
         """Should detect and record price changes"""
         from services.scheduler import job_check_prices_async, running_tasks, task_results, clear_logs
@@ -267,9 +267,6 @@ class TestJobCheckPricesAsync:
 
         # Last price was different
         mock_last.return_value = {'price': '1500,00'}
-
-        # No alerts
-        mock_alerts.return_value = 0
 
         await job_check_prices_async()
 

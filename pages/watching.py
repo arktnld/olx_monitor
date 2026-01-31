@@ -1,5 +1,5 @@
 from nicegui import ui
-from models import Ad, PriceHistory, calculate_price_variation, get_price_color
+from models import Ad, PriceHistory, calculate_price_variation
 from services.database import get_watching_ads, get_price_history, get_distinct_states
 from services.scheduler import run_price_check_now, get_task_status
 from components.ad_modal import AdModal
@@ -180,12 +180,16 @@ class WatchingPage:
 
                 # Preço e variação/status
                 with ui.row().classes('items-center justify-between flex-wrap gap-1'):
-                    price_classes = 'text-sm sm:text-lg font-bold'
-                    if is_inactive:
-                        price_classes += ' text-gray-500 line-through'
-                    else:
-                        price_classes += f' {get_price_color(ad.price)}'
-                    ui.label(f'R$ {ad.price}').classes(price_classes)
+                    with ui.row().classes('items-center gap-1'):
+                        price_classes = 'text-sm sm:text-lg font-bold'
+                        if is_inactive:
+                            price_classes += ' text-gray-500 line-through'
+                        else:
+                            price_classes += ' text-green-600'
+                        ui.label(f'R$ {ad.price}').classes(price_classes)
+
+                        if not is_inactive and ad.is_cheap:
+                            ui.badge('Preço Baixo').props('color=orange dense')
 
                     if is_inactive:
                         ui.badge('Inativo').props('color=red dense')
