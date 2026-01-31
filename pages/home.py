@@ -12,6 +12,7 @@ PAGE_SIZE = 24
 class HomePage:
     def __init__(self):
         self.ads_container = None
+        self.tabs_container = None
         self.modal = AdModal(on_update=self.refresh)
         self.filters = Filters(on_filter_change=self._on_filter_change)
         self.selected_search_id = None
@@ -27,7 +28,9 @@ class HomePage:
     def create(self):
         with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-4'):
             self.filters.create_search_bar()
-            self._create_search_tabs()
+            self.tabs_container = ui.element('div').classes('w-full')
+            with self.tabs_container:
+                self._create_search_tabs()
             self.filters.create()
             self._create_results_header()
             self.ads_container = ui.element('div').classes('w-full')
@@ -85,8 +88,11 @@ class HomePage:
 
     def _refresh_tabs(self):
         """Recarrega as tabs com as novas contagens"""
-        # Recarregar a página inteira para atualizar tabs
-        ui.navigate.reload()
+        if not self.tabs_container:
+            return
+        self.tabs_container.clear()
+        with self.tabs_container:
+            self._create_search_tabs()
 
     def _create_search_tabs(self):
         searches = get_all_searches()
