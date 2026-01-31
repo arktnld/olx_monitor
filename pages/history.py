@@ -14,8 +14,6 @@ class HistoryPage:
         self.state = None
         self.search_text = None
         self.check_button = None
-        self.check_spinner = None
-        self.check_result = None
         self.check_timer = None
 
     def create(self):
@@ -95,18 +93,13 @@ class HistoryPage:
         self.refresh()
 
     def _create_check_button(self):
-        with ui.row().classes('items-center gap-2'):
-            self.check_result = ui.label('').classes('text-sm text-gray-500')
-            with ui.element('div').classes('relative'):
-                self.check_button = ui.button(
-                    'Verificar Status',
-                    icon='fact_check',
-                    on_click=self._on_check_click
-                ).props('outline color=primary rounded')
-                self.check_spinner = ui.spinner('dots', size='sm').classes('absolute inset-0 m-auto')
-                self.check_spinner.set_visibility(False)
+        self.check_button = ui.button(
+            'Verificar Status',
+            icon='fact_check',
+            on_click=self._on_check_click
+        ).props('outline color=primary rounded')
 
-    async def _on_check_click(self):
+    def _on_check_click(self):
         status = get_task_status('status_check')
         if status['running']:
             ui.notify('Verificação já está em execução', type='warning')
@@ -119,35 +112,32 @@ class HistoryPage:
 
         self.check_button.disable()
         self.check_button.props('loading')
-        self.check_spinner.set_visibility(True)
-        self.check_result.set_text('Verificando...')
+        self.check_button.text = 'Verificando...'
         self.check_timer = ui.timer(1.0, self._check_progress)
 
-    async def _check_progress(self):
+    def _check_progress(self):
         status = get_task_status('status_check')
         if not status['running']:
             if self.check_timer:
                 self.check_timer.cancel()
                 self.check_timer = None
 
-            self.check_button.enable()
             self.check_button.props(remove='loading')
-            self.check_spinner.set_visibility(False)
+            self.check_button.enable()
 
             result = status['result']
             if result and result.get('success'):
                 deactivated = result.get('deactivated', 0)
                 if deactivated > 0:
-                    self.check_result.set_text(f'{deactivated} desativados!')
-                    self.check_result.classes(remove='text-gray-500', add='text-orange-600')
+                    self.check_button.text = f'{deactivated} inativos!'
                     ui.notify(f'{deactivated} anúncios marcados como inativos!', type='warning')
                 else:
-                    self.check_result.set_text('Nenhum inativo')
-                    self.check_result.classes(remove='text-orange-600', add='text-gray-500')
+                    self.check_button.text = 'Verificar Status'
+                    ui.notify('Nenhum anúncio inativo encontrado', type='info')
                 self.refresh()
             elif result:
-                self.check_result.set_text('Erro')
-                self.check_result.classes(add='text-red-600')
+                self.check_button.text = 'Erro!'
+                ui.notify('Erro ao verificar status', type='negative')
 
     def refresh(self):
         if self.container:

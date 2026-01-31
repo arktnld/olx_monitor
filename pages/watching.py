@@ -13,8 +13,6 @@ class WatchingPage:
         self.max_price = None
         self.state = None
         self.check_button = None
-        self.check_spinner = None
-        self.check_result = None
         self.check_timer = None
 
     def create(self):
@@ -77,18 +75,13 @@ class WatchingPage:
         self.refresh()
 
     def _create_check_button(self):
-        with ui.row().classes('items-center gap-2'):
-            self.check_result = ui.label('').classes('text-sm text-gray-500')
-            with ui.element('div').classes('relative'):
-                self.check_button = ui.button(
-                    'Verificar Preços',
-                    icon='price_check',
-                    on_click=self._on_check_click
-                ).props('outline color=primary rounded')
-                self.check_spinner = ui.spinner('dots', size='sm').classes('absolute inset-0 m-auto')
-                self.check_spinner.set_visibility(False)
+        self.check_button = ui.button(
+            'Verificar Preços',
+            icon='price_check',
+            on_click=self._on_check_click
+        ).props('outline color=primary rounded')
 
-    async def _on_check_click(self):
+    def _on_check_click(self):
         status = get_task_status('price_check')
         if status['running']:
             ui.notify('Verificação já está em execução', type='warning')
@@ -101,35 +94,32 @@ class WatchingPage:
 
         self.check_button.disable()
         self.check_button.props('loading')
-        self.check_spinner.set_visibility(True)
-        self.check_result.set_text('Verificando...')
+        self.check_button.text = 'Verificando...'
         self.check_timer = ui.timer(1.0, self._check_progress)
 
-    async def _check_progress(self):
+    def _check_progress(self):
         status = get_task_status('price_check')
         if not status['running']:
             if self.check_timer:
                 self.check_timer.cancel()
                 self.check_timer = None
 
-            self.check_button.enable()
             self.check_button.props(remove='loading')
-            self.check_spinner.set_visibility(False)
+            self.check_button.enable()
 
             result = status['result']
             if result and result.get('success'):
                 changes = result.get('price_changes', 0)
                 if changes > 0:
-                    self.check_result.set_text(f'{changes} preços alterados!')
-                    self.check_result.classes(remove='text-gray-500', add='text-green-600')
+                    self.check_button.text = f'{changes} alterados!'
                     ui.notify(f'{changes} alterações de preço encontradas!', type='positive')
                 else:
-                    self.check_result.set_text('Sem alterações')
-                    self.check_result.classes(remove='text-green-600', add='text-gray-500')
+                    self.check_button.text = 'Verificar Preços'
+                    ui.notify('Nenhuma alteração de preço', type='info')
                 self.refresh()
             elif result:
-                self.check_result.set_text('Erro')
-                self.check_result.classes(add='text-red-600')
+                self.check_button.text = 'Erro!'
+                ui.notify('Erro ao verificar preços', type='negative')
 
     def refresh(self):
         if self.container:
