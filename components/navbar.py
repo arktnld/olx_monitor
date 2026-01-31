@@ -14,13 +14,24 @@ def _nav_button_mobile(label: str, icon: str, path: str):
 
 
 def _notification_button():
-    """Button to enable push notifications"""
-    btn = ui.button(icon='notifications').props('flat round dense')
-    btn.classes('text-gray-500 hover:text-amber-500')
+    """Button to enable push notifications (desktop)"""
+    with ui.button().props('flat round dense').classes('text-gray-500 hover:text-amber-500') as btn:
+        ui.icon('notifications', size='sm')
     btn.tooltip('Ativar notificações')
+    _attach_notification_handler(btn)
 
-    # Update button based on notification permission
-    btn.on('click', lambda: ui.run_javascript('''
+
+def _notification_button_mobile():
+    """Button to enable push notifications (mobile)"""
+    with ui.column().classes('items-center gap-0 cursor-pointer min-w-[60px]') as container:
+        ui.icon('notifications', size='sm').classes('text-gray-600')
+        ui.label('Notif.').classes('text-xs text-gray-600')
+    _attach_notification_handler(container)
+
+
+def _attach_notification_handler(element):
+    """Attach notification permission handler to element"""
+    element.on('click', lambda: ui.run_javascript('''
         (async () => {
             if (!('Notification' in window)) {
                 alert('Este navegador não suporta notificações');
@@ -87,4 +98,4 @@ def create_navbar():
             _nav_button_mobile('Acompanhar', 'visibility', '/watching')
             _nav_button_mobile('Histórico', 'history', '/history')
             _nav_button_mobile('Config', 'settings', '/config')
-            _nav_button_mobile('Logs', 'schedule', '/logs')
+            _notification_button_mobile()

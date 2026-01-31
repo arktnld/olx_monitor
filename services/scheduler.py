@@ -12,7 +12,7 @@ from services.database import (
     get_active_price_alerts, mark_alert_triggered
 )
 from services.scraper import OlxScraper, filter_urls_by_keywords
-from services.logger import get_logger, get_memory_logs, clear_memory_logs
+from services.logger import get_logger
 from services.exceptions import ScraperError
 from services.notifications import (
     check_price_alert_trigger, notify_price_alert,
@@ -127,6 +127,35 @@ async def _check_price_alerts() -> int:
     return triggered
 
 
+def _handle_async_error(result) -> bool:
+    """Handle errors from async gather results, returns True if error"""
+    if isinstance(result, BaseException):
+        level = "warning" if isinstance(result, ScraperError) else "error"
+        add_log(f"  Erro: {result}", level)
+        return True
+    return False
+
+
+def _save_new_ad(ad, search_id, cheap_threshold: float = None) -> None:
+    """Save new ad and notify if cheap based on search threshold"""
+    create_ad(
+        url=ad.url, title=ad.title, price=ad.price, description=ad.description,
+        state=ad.state, municipality=ad.municipality, neighbourhood=ad.neighbourhood,
+        zipcode=ad.zipcode, seller=ad.seller, condition=ad.condition,
+        published_at=ad.published_at, main_category=ad.main_category,
+        sub_category=ad.sub_category, hobbie_type=ad.hobbie_type,
+        images=ad.images, olx_pay=ad.olx_pay, olx_delivery=ad.olx_delivery,
+        search_id=search_id
+    )
+    add_log(f"  + Novo anúncio: {ad.title[:50]}...")
+
+    # Só notifica se tiver threshold configurado para essa busca
+    if cheap_threshold and is_cheap_ad(ad.price, threshold=cheap_threshold):
+        first_image = ad.images[0] if ad.images else None
+        notify_cheap_ad(ad.title, ad.price, ad.url, first_image)
+        add_log(f"  Notificação enviada: preço baixo R$ {ad.price} (< R$ {cheap_threshold:.0f})", "info")
+
+
 async def job_search_new_ads_async():
     """Async version of job_search_new_ads"""
     global running_tasks, task_results
@@ -173,43 +202,12 @@ async def job_search_new_ads_async():
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for result in results:
-                if isinstance(result, BaseException):
-                    if isinstance(result, ScraperError):
-                        add_log(f"  Erro ao buscar anúncio: {result}", "warning")
-                    else:
-                        add_log(f"  Erro inesperado: {result}", "error")
+                if _handle_async_error(result):
                     continue
-
-                url, ad = result
+                _, ad = result
                 if ad:
-                    create_ad(
-                        url=ad.url,
-                        title=ad.title,
-                        price=ad.price,
-                        description=ad.description,
-                        state=ad.state,
-                        municipality=ad.municipality,
-                        neighbourhood=ad.neighbourhood,
-                        zipcode=ad.zipcode,
-                        seller=ad.seller,
-                        condition=ad.condition,
-                        published_at=ad.published_at,
-                        main_category=ad.main_category,
-                        sub_category=ad.sub_category,
-                        hobbie_type=ad.hobbie_type,
-                        images=ad.images,
-                        olx_pay=ad.olx_pay,
-                        olx_delivery=ad.olx_delivery,
-                        search_id=search.id
-                    )
+                    _save_new_ad(ad, search.id, search.cheap_threshold)
                     total_new += 1
-                    add_log(f"  + Novo anúncio: {ad.title[:50]}...")
-
-                    # Notify if price <= 150
-                    if is_cheap_ad(ad.price):
-                        first_image = ad.images[0] if ad.images else None
-                        notify_cheap_ad(ad.title, ad.price, ad.url, first_image)
-                        add_log(f"  Notificação enviada: preço baixo R$ {ad.price}", "info")
 
         add_log(f"Busca finalizada. {total_new} novos anúncios salvos.", "success")
         task_results['search'] = {'success': True, 'total_new': total_new}
@@ -246,38 +244,27 @@ async def job_check_prices_async():
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for result in results:
-            if isinstance(result, BaseException):
-                if isinstance(result, ScraperError):
-                    add_log(f"  Erro ao verificar preço: {result}", "warning")
-                else:
-                    add_log(f"  Erro inesperado: {result}", "error")
+            if _handle_async_error(result):
                 continue
 
             ad, current_price = result
-
-            if current_price is None:
-                add_log(f"  Não foi possível verificar preço: {ad.title[:30]}...", "warning")
-                continue
-
-            if ad.id is None:
+            if current_price is None or ad.id is None:
                 continue
 
             last_check = get_last_price_check(ad.id)
             last_price = last_check.get("price") if last_check else ad.price
 
+            add_price_history(ad.id, current_price)
+
             if current_price != last_price:
-                add_price_history(ad.id, current_price)
                 update_ad_price(ad.id, current_price)
                 add_log(f"  Preço alterado: {ad.title[:30]}... ({last_price} -> {current_price})", "info")
                 price_changes += 1
 
-                # Notify if price dropped (watching ads)
                 if is_price_drop(last_price, current_price):
                     first_image = ad.images[0] if ad.images else None
                     notify_price_drop(ad.title, last_price, current_price, ad.url, first_image)
-                    add_log(f"  Notificação enviada: preço baixou!", "info")
-            else:
-                add_price_history(ad.id, current_price)
+                    add_log("  Notificação enviada: preço baixou!", "info")
 
         # Check price alerts
         alerts_triggered = await _check_price_alerts()

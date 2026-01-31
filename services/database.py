@@ -85,6 +85,8 @@ def init_db():
             cursor.execute("ALTER TABLE searches ADD COLUMN category TEXT DEFAULT 'games'")
         if 'subcategory' not in search_columns:
             cursor.execute("ALTER TABLE searches ADD COLUMN subcategory TEXT DEFAULT ''")
+        if 'cheap_threshold' not in search_columns:
+            cursor.execute("ALTER TABLE searches ADD COLUMN cheap_threshold REAL")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS price_history (
@@ -188,29 +190,31 @@ def get_search_by_id(search_id: int):
 
 
 def create_search(name: str, base_url: str, queries: list, categories: list, exclude_keywords: list,
-                  state: str = '', region: str = '', category: str = 'games', subcategory: str = ''):
+                  state: str = '', region: str = '', category: str = 'games', subcategory: str = '',
+                  cheap_threshold: float = None):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO searches (name, base_url, queries, categories, exclude_keywords, state, region, category, subcategory)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO searches (name, base_url, queries, categories, exclude_keywords, state, region, category, subcategory, cheap_threshold)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (name, base_url, json.dumps(queries), json.dumps(categories), json.dumps(exclude_keywords),
-              state, region, category, subcategory))
+              state, region, category, subcategory, cheap_threshold))
         conn.commit()
         return cursor.lastrowid
 
 
 def update_search(search_id: int, name: str, base_url: str, queries: list, categories: list, exclude_keywords: list, active: bool,
-                  state: str = '', region: str = '', category: str = 'games', subcategory: str = ''):
+                  state: str = '', region: str = '', category: str = 'games', subcategory: str = '',
+                  cheap_threshold: float = None):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE searches
             SET name = ?, base_url = ?, queries = ?, categories = ?, exclude_keywords = ?, active = ?,
-                state = ?, region = ?, category = ?, subcategory = ?
+                state = ?, region = ?, category = ?, subcategory = ?, cheap_threshold = ?
             WHERE id = ?
         """, (name, base_url, json.dumps(queries), json.dumps(categories), json.dumps(exclude_keywords), active,
-              state, region, category, subcategory, search_id))
+              state, region, category, subcategory, cheap_threshold, search_id))
         conn.commit()
 
 
@@ -230,6 +234,50 @@ def toggle_search_active(search_id: int):
 
 # ==================== ADS ====================
 
+def _build_ads_filter(search_id=None, status="all", min_price=None, max_price=None,
+                      state=None, days=None, ad_status=None, search_text=None):
+    """Helper para construir filtros de ads (reduz duplicação)"""
+    conditions = []
+    params = []
+
+    if search_id:
+        conditions.append("search_id = ?")
+        params.append(search_id)
+
+    if search_text:
+        conditions.append("(LOWER(title) LIKE ? OR LOWER(description) LIKE ?)")
+        search_pattern = f"%{search_text.lower()}%"
+        params.extend([search_pattern, search_pattern])
+
+    status_map = {"new": "seen = 0", "seen": "seen = 1", "watching": "watching = 1"}
+    if status in status_map:
+        conditions.append(status_map[status])
+
+    if ad_status:
+        conditions.append("status = ?")
+        params.append(ad_status)
+
+    price_cast = "CAST(REPLACE(REPLACE(price, '.', ''), ',', '.') AS REAL)"
+    if min_price is not None:
+        conditions.append(f"{price_cast} >= ?")
+        params.append(min_price)
+
+    if max_price is not None:
+        conditions.append(f"{price_cast} <= ?")
+        params.append(max_price)
+
+    if state:
+        conditions.append("state = ?")
+        params.append(state)
+
+    if days:
+        conditions.append("found_at >= datetime('now', ?)")
+        params.append(f"-{days} days")
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    return where, params
+
+
 def get_ads(search_id: Optional[int] = None, status: str = "all",
             min_price: Optional[float] = None, max_price: Optional[float] = None,
             state: Optional[str] = None, days: Optional[int] = None,
@@ -237,61 +285,22 @@ def get_ads(search_id: Optional[int] = None, status: str = "all",
             sort_by: Optional[str] = None,
             limit: int = 100, offset: int = 0):
 
-    query = "SELECT * FROM ads WHERE 1=1"
-    params = []
+    where, params = _build_ads_filter(search_id, status, min_price, max_price,
+                                       state, days, ad_status, search_text)
 
-    if search_id:
-        query += " AND search_id = ?"
-        params.append(search_id)
+    sort_map = {
+        'price_asc': "CAST(REPLACE(REPLACE(price, '.', ''), ',', '.') AS REAL) ASC",
+        'price_desc': "CAST(REPLACE(REPLACE(price, '.', ''), ',', '.') AS REAL) DESC",
+    }
+    order = sort_map.get(sort_by, "found_at DESC")
 
-    if search_text:
-        query += " AND (LOWER(title) LIKE ? OR LOWER(description) LIKE ?)"
-        search_pattern = f"%{search_text.lower()}%"
-        params.extend([search_pattern, search_pattern])
-
-    if status == "new":
-        query += " AND seen = 0"
-    elif status == "seen":
-        query += " AND seen = 1"
-    elif status == "watching":
-        query += " AND watching = 1"
-
-    if ad_status:
-        query += " AND status = ?"
-        params.append(ad_status)
-
-    if min_price is not None:
-        query += " AND CAST(REPLACE(REPLACE(price, '.', ''), ',', '.') AS REAL) >= ?"
-        params.append(min_price)
-
-    if max_price is not None:
-        query += " AND CAST(REPLACE(REPLACE(price, '.', ''), ',', '.') AS REAL) <= ?"
-        params.append(max_price)
-
-    if state:
-        query += " AND state = ?"
-        params.append(state)
-
-    if days:
-        query += " AND found_at >= datetime('now', ?)"
-        params.append(f"-{days} days")
-
-    # Ordenação
-    if sort_by == 'price_asc':
-        query += " ORDER BY CAST(REPLACE(REPLACE(price, '.', ''), ',', '.') AS REAL) ASC"
-    elif sort_by == 'price_desc':
-        query += " ORDER BY CAST(REPLACE(REPLACE(price, '.', ''), ',', '.') AS REAL) DESC"
-    else:
-        query += " ORDER BY found_at DESC"
-
-    query += " LIMIT ? OFFSET ?"
+    query = f"SELECT * FROM ads WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, params)
-        rows = cursor.fetchall()
-        return [dict(row) for row in rows]
+        return [dict(row) for row in cursor.fetchall()]
 
 
 def get_ad_by_id(ad_id: int):
@@ -498,48 +507,12 @@ def get_ads_count(search_id: Optional[int] = None, status: str = "all",
                   state: Optional[str] = None, days: Optional[int] = None,
                   ad_status: Optional[str] = None, search_text: Optional[str] = None):
     """Conta o total de anúncios com os filtros aplicados"""
-    query = "SELECT COUNT(*) as count FROM ads WHERE 1=1"
-    params = []
-
-    if search_id:
-        query += " AND search_id = ?"
-        params.append(search_id)
-
-    if search_text:
-        query += " AND (LOWER(title) LIKE ? OR LOWER(description) LIKE ?)"
-        search_pattern = f"%{search_text.lower()}%"
-        params.extend([search_pattern, search_pattern])
-
-    if status == "new":
-        query += " AND seen = 0"
-    elif status == "seen":
-        query += " AND seen = 1"
-    elif status == "watching":
-        query += " AND watching = 1"
-
-    if ad_status:
-        query += " AND status = ?"
-        params.append(ad_status)
-
-    if min_price is not None:
-        query += " AND CAST(REPLACE(REPLACE(price, '.', ''), ',', '.') AS REAL) >= ?"
-        params.append(min_price)
-
-    if max_price is not None:
-        query += " AND CAST(REPLACE(REPLACE(price, '.', ''), ',', '.') AS REAL) <= ?"
-        params.append(max_price)
-
-    if state:
-        query += " AND state = ?"
-        params.append(state)
-
-    if days:
-        query += " AND found_at >= datetime('now', ?)"
-        params.append(f"-{days} days")
+    where, params = _build_ads_filter(search_id, status, min_price, max_price,
+                                       state, days, ad_status, search_text)
 
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(query, params)
+        cursor.execute(f"SELECT COUNT(*) as count FROM ads WHERE {where}", params)
         return cursor.fetchone()['count']
 
 

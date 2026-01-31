@@ -1,7 +1,6 @@
 """Push notifications service for OLX Monitor"""
 
 import json
-from pathlib import Path
 from typing import Optional
 from pywebpush import webpush, WebPushException
 from py_vapid import Vapid
@@ -136,7 +135,7 @@ def send_push_notification(
             # Remove invalid subscriptions (410 Gone, 404 Not Found)
             if e.response and e.response.status_code in (404, 410):
                 delete_push_subscription(sub['endpoint'])
-                logger.info(f"Removed invalid subscription")
+                logger.info("Removed invalid subscription")
         except Exception as e:
             logger.error(f"Unexpected error sending push: {e}")
 

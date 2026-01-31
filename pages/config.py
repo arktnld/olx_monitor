@@ -123,6 +123,9 @@ class ConfigPage:
                     # Termos de busca
                     ui.label(f'Buscando: {", ".join(search.queries)}').classes('text-sm text-blue-600')
 
+                    if search.cheap_threshold:
+                        ui.label(f'Notificar se preço < R$ {search.cheap_threshold:.0f}').classes('text-xs text-green-600')
+
                     if search.exclude_keywords:
                         ui.label(f'Excluindo: {", ".join(search.exclude_keywords)}').classes('text-xs text-gray-400')
 
@@ -199,6 +202,14 @@ class ConfigPage:
                 placeholder='danificado\nquebrado\ncom defeito'
             ).props('outlined rounded').classes('w-full')
 
+            ui.label('Notificação de preço baixo (opcional)').classes('font-semibold mt-4 mb-2')
+
+            threshold_input = ui.number(
+                label='Notificar se preço menor que',
+                value=search.cheap_threshold,
+                placeholder='Ex: 150'
+            ).props('outlined rounded prefix="R$"').classes('w-48')
+
             with ui.row().classes('w-full justify-end gap-2 mt-4'):
                 ui.button('Cancelar', on_click=dialog.close).props('flat')
                 ui.button(
@@ -208,6 +219,7 @@ class ConfigPage:
                         name_input.value,
                         url_input.value,
                         exclude_input.value,
+                        threshold_input.value,
                         search.active,
                         dialog
                     )
@@ -215,7 +227,7 @@ class ConfigPage:
 
         dialog.open()
 
-    def _save_search(self, search_id, name, url, exclude_str, active, dialog):
+    def _save_search(self, search_id, name, url, exclude_str, cheap_threshold, active, dialog):
         # Sanitize and validate inputs
         name = sanitize_text(name, max_length=100)
         url = sanitize_text(url)
@@ -239,13 +251,17 @@ class ConfigPage:
         # Query pode ser vazio (monitorar categoria inteira)
         queries = [query] if query else []
 
+        # Threshold pode ser None se vazio
+        threshold = float(cheap_threshold) if cheap_threshold else None
+
         if search_id is None:
             create_search(
                 name=name,
                 base_url=base_url,
                 queries=queries,
                 categories=categories,
-                exclude_keywords=exclude
+                exclude_keywords=exclude,
+                cheap_threshold=threshold
             )
         else:
             update_search(
@@ -255,7 +271,8 @@ class ConfigPage:
                 queries=queries,
                 categories=categories,
                 exclude_keywords=exclude,
-                active=active
+                active=active,
+                cheap_threshold=threshold
             )
 
         ui.notify('Busca salva com sucesso', type='positive')

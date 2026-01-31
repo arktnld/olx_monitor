@@ -12,6 +12,7 @@ data/
 run_prod.sh
 update.sh
 deploy.sh
+commit.sh
 
 # Misc
 .env

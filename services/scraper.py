@@ -4,6 +4,7 @@ import requests
 import re
 import json
 import functools
+import random
 from bs4 import BeautifulSoup
 from typing import Optional, Callable, TypeVar
 from models import Ad
@@ -11,6 +12,23 @@ from services.logger import get_logger
 from services.exceptions import NetworkError, ParseError, RateLimitError, AdNotFoundError
 
 logger = get_logger("olx_monitor.scraper")
+
+# User-Agents realistas de browsers populares
+USER_AGENTS = [
+    # Chrome Windows
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    # Chrome Mac
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    # Firefox Windows
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+    # Firefox Mac
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.3; rv:122.0) Gecko/20100101 Firefox/122.0',
+    # Safari Mac
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    # Edge Windows
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
+]
 
 T = TypeVar('T')
 
@@ -73,29 +91,42 @@ def retry_with_backoff(
 
 class OlxScraper:
     def __init__(self):
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._rotate_headers()
+
+    def _rotate_headers(self):
+        """Gera headers realistas com User-Agent aleatório"""
+        user_agent = random.choice(USER_AGENTS)
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'none',
             'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+            'Referer': 'https://www.olx.com.br/',
         }
-        self._session: Optional[aiohttp.ClientSession] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session with connection pooling"""
         if self._session is None or self._session.closed:
+            # Rotacionar headers a cada nova sessão
+            self._rotate_headers()
             connector = aiohttp.TCPConnector(limit=10, limit_per_host=5)
             timeout = aiohttp.ClientTimeout(total=30)
             self._session = aiohttp.ClientSession(
                 headers=self.headers,
                 connector=connector,
-                timeout=timeout
+                timeout=timeout,
+                cookie_jar=aiohttp.CookieJar()
             )
         return self._session
 

@@ -7,7 +7,7 @@ class Filters:
     def __init__(self, on_filter_change: Callable):
         self.on_filter_change = on_filter_change
         self.status = "all"
-        self.ad_status = None
+        self.ad_status = "active"
         self.min_price = None
         self.max_price = None
         self.state = None
@@ -15,16 +15,17 @@ class Filters:
         self.search_text = None
         self.sort_by = None
 
-    def create(self):
-        states = get_distinct_states()
-
-        # Campo de busca por texto (fora do expansion para ficar sempre visível)
+    def create_search_bar(self):
+        """Cria apenas a barra de busca (para ser chamada separadamente)"""
         with ui.row().classes('w-full gap-2 items-center'):
             self.search_input = ui.input(
                 placeholder='Buscar por título ou descrição...',
             ).props('dense outlined rounded clearable').classes('flex-grow')
             self.search_input.on('keydown.enter', lambda: self._set_search_text(self.search_input.value))
             ui.button(icon='search', on_click=lambda: self._set_search_text(self.search_input.value)).props('flat round dense')
+
+    def create(self):
+        states = get_distinct_states()
 
         with ui.expansion('Filtros', icon='filter_list').classes('w-full rounded-xl overflow-hidden').props('dense header-class="text-weight-medium"'):
             with ui.row().classes('w-full flex-wrap gap-3 items-center py-2'):
@@ -133,7 +134,7 @@ class Filters:
 
     def _clear_filters(self):
         self.status = "all"
-        self.ad_status = None
+        self.ad_status = "active"
         self.min_price = None
         self.max_price = None
         self.state = None
@@ -142,7 +143,7 @@ class Filters:
         self.sort_by = None
         self.sort_select.set_value(None)
         self.status_select.set_value('all')
-        self.ad_status_select.set_value(None)
+        self.ad_status_select.set_value('active')
         self.min_input.set_value(None)
         self.max_input.set_value(None)
         self.days_select.set_value(None)

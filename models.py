@@ -18,6 +18,7 @@ class Search:
     region: str = ""
     category: str = "games"
     subcategory: str = ""
+    cheap_threshold: Optional[float] = None  # Preço máximo para notificar como "barato"
 
     @classmethod
     def from_dict(cls, data: dict) -> "Search":
@@ -33,7 +34,8 @@ class Search:
             state=data.get("state", ""),
             region=data.get("region", ""),
             category=data.get("category", "games"),
-            subcategory=data.get("subcategory", "")
+            subcategory=data.get("subcategory", ""),
+            cheap_threshold=data.get("cheap_threshold")
         )
 
 

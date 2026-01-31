@@ -18,7 +18,6 @@ class HomePage:
         self.current_filters = {}
         self.tab_buttons = {}
         self.update_button = None
-        self.update_spinner = None
         self.update_result = None
         self.update_timer = None
         self.current_offset = 0
@@ -28,6 +27,7 @@ class HomePage:
 
     def create(self):
         with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-4'):
+            self.filters.create_search_bar()
             self._create_search_tabs()
             self.filters.create()
             self._create_results_header()
@@ -47,10 +47,11 @@ class HomePage:
             ui.notify('Não foi possível iniciar a busca', type='negative')
             return
 
-        # Atualizar UI
+        # Atualizar UI - mostrar spinner e texto "Buscando..."
         self.update_button.disable()
-        self.update_spinner.set_visibility(True)
+        self.update_button.props('loading')
         self.update_result.set_text('Buscando...')
+        self.update_result.classes(remove='text-green-600 text-red-600', add='text-gray-500')
 
         # Criar timer para verificar progresso
         self.update_timer = ui.timer(1.0, self._check_update_progress)
@@ -65,7 +66,7 @@ class HomePage:
                 self.update_timer = None
 
             self.update_button.enable()
-            self.update_spinner.set_visibility(False)
+            self.update_button.props(remove='loading')
 
             result = status['result']
             if result and result.get('success'):
@@ -95,20 +96,18 @@ class HomePage:
     def _create_search_tabs(self):
         searches = get_all_searches()
         counts = get_ads_count_by_search()
+        all_count = sum(counts.values())
 
-        with ui.card().classes('w-full p-4 rounded-xl'):
-            with ui.row().classes('w-full justify-between items-center mb-3'):
-                ui.label('Buscas').classes('font-semibold')
-                self._create_update_status()
-
-            with ui.row().classes('flex-wrap gap-2 items-center'):
-                # Botão de atualizar primeiro
+        with ui.expansion('Buscas', icon='search').classes('w-full rounded-xl overflow-hidden').props('dense header-class="text-weight-medium"'):
+            with ui.row().classes('w-full flex-wrap gap-2 items-center py-2'):
+                # Botão de atualizar
                 self._create_update_button()
+                self._create_update_status()
 
                 # Separador visual
                 ui.element('div').classes('w-px h-6 bg-gray-300 mx-1')
 
-                all_count = sum(counts.values())
+                # Tabs de busca
                 self._create_tab_button(None, 'Todos', all_count)
 
                 for search_data in searches:
@@ -119,17 +118,11 @@ class HomePage:
                         self._create_tab_button(search_id, name, count)
 
     def _create_update_button(self):
-        with ui.element('div').classes('relative'):
-            self.update_button = ui.button(
-                'Atualizar',
-                icon='refresh',
-                on_click=self._on_update_click
-            ).props('outline color=primary rounded')
-
-            self.update_spinner = ui.spinner('dots', size='sm').classes(
-                'absolute inset-0 m-auto'
-            )
-            self.update_spinner.set_visibility(False)
+        self.update_button = ui.button(
+            'Atualizar',
+            icon='refresh',
+            on_click=self._on_update_click
+        ).props('outline color=primary rounded')
 
     def _create_update_status(self):
         self.update_result = ui.label('').classes('text-sm text-gray-500')
