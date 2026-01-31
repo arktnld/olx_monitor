@@ -394,15 +394,15 @@ def mark_ad_seen(ad_id: int):
 def toggle_ad_watching(ad_id: int) -> bool:
     """
     Toggle watching status. Returns True if now watching, False if stopped.
-    Downloads images when starting to watch.
+    Downloads images and saves initial price to history when starting to watch.
     """
     from services.images import download_ad_images
 
     with get_connection() as conn:
         cursor = conn.cursor()
 
-        # Pegar estado atual e imagens
-        cursor.execute("SELECT watching, images FROM ads WHERE id = ?", (ad_id,))
+        # Pegar estado atual, imagens e preço
+        cursor.execute("SELECT watching, images, price FROM ads WHERE id = ?", (ad_id,))
         row = cursor.fetchone()
         if not row:
             return False
@@ -414,14 +414,20 @@ def toggle_ad_watching(ad_id: int) -> bool:
         cursor.execute("UPDATE ads SET watching = ? WHERE id = ?", (now_watching, ad_id))
         conn.commit()
 
-        # Se começou a acompanhar, baixar imagens
-        if now_watching and row['images']:
-            try:
-                images = json.loads(row['images']) if isinstance(row['images'], str) else row['images']
-                if images:
-                    download_ad_images(ad_id, images)
-            except Exception as e:
-                print(f"Erro ao baixar imagens do anúncio {ad_id}: {e}")
+        # Se começou a acompanhar
+        if now_watching:
+            # Salvar preço inicial no histórico
+            if row['price']:
+                add_price_history(ad_id, row['price'])
+
+            # Baixar imagens
+            if row['images']:
+                try:
+                    images = json.loads(row['images']) if isinstance(row['images'], str) else row['images']
+                    if images:
+                        download_ad_images(ad_id, images)
+                except Exception as e:
+                    print(f"Erro ao baixar imagens do anúncio {ad_id}: {e}")
 
         return now_watching
 

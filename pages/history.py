@@ -118,6 +118,7 @@ class HistoryPage:
             return
 
         self.check_button.disable()
+        self.check_button.props('loading')
         self.check_spinner.set_visibility(True)
         self.check_result.set_text('Verificando...')
         self.check_timer = ui.timer(1.0, self._check_progress)
@@ -130,6 +131,7 @@ class HistoryPage:
                 self.check_timer = None
 
             self.check_button.enable()
+            self.check_button.props(remove='loading')
             self.check_spinner.set_visibility(False)
 
             result = status['result']
