@@ -8,11 +8,13 @@ from apscheduler.triggers.cron import CronTrigger
 from services.database import (
     get_active_searches, create_ad, get_watching_ads,
     add_price_history, update_ad_price, get_last_price_check,
-    get_ads_to_check, update_ad_status, get_setting, get_existing_urls
+    get_ads_to_check, update_ad_status, get_setting, get_existing_urls,
+    get_active_price_alerts, mark_alert_triggered
 )
 from services.scraper import OlxScraper, filter_urls_by_keywords
 from services.logger import get_logger, get_memory_logs, clear_memory_logs
 from services.exceptions import ScraperError
+from services.notifications import check_price_alert_trigger, notify_price_alert
 from models import Search, Ad
 
 
@@ -82,6 +84,44 @@ async def _check_status_with_semaphore(semaphore: asyncio.Semaphore, ad_id: int,
         status = await scraper.check_ad_status_async(url)
         await asyncio.sleep(0.5)  # Rate limiting
         return ad_id, url, status
+
+
+async def _check_price_alerts() -> int:
+    """Check all active price alerts and trigger notifications"""
+    alerts = get_active_price_alerts()
+    triggered = 0
+
+    for alert in alerts:
+        ad_id = alert['ad_id']
+        target_price = alert['target_price']
+        notify_below = alert['notify_below']
+        current_price = alert['price']
+        title = alert['title']
+        url = alert['url']
+
+        # Skip if already triggered
+        if alert.get('triggered_at'):
+            continue
+
+        # Check if alert should trigger
+        if check_price_alert_trigger(current_price, target_price, notify_below):
+            try:
+                # Send notification
+                await notify_price_alert(
+                    ad_title=title,
+                    old_price=current_price,  # Current price is already updated
+                    new_price=current_price,
+                    target_price=target_price,
+                    ad_url=url
+                )
+                # Mark as triggered
+                mark_alert_triggered(ad_id)
+                triggered += 1
+                add_log(f"  Alerta disparado: {title[:30]}... (R$ {current_price} <= R$ {target_price:.2f})", "info")
+            except Exception as e:
+                add_log(f"  Erro ao disparar alerta: {e}", "error")
+
+    return triggered
 
 
 async def job_search_new_ads_async():
@@ -224,7 +264,10 @@ async def job_check_prices_async():
             else:
                 add_price_history(ad.id, current_price)
 
-        add_log(f"Verificação finalizada. {price_changes} alterações de preço.", "success")
+        # Check price alerts
+        alerts_triggered = await _check_price_alerts()
+
+        add_log(f"Verificação finalizada. {price_changes} alterações de preço, {alerts_triggered} alertas.", "success")
         task_results['price_check'] = {'success': True, 'price_changes': price_changes}
     except Exception as e:
         add_log(f"Erro na verificação de preços: {e}", "error")

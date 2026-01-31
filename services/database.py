@@ -103,6 +103,19 @@ def init_db():
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS price_alerts (
+                id INTEGER PRIMARY KEY,
+                ad_id INTEGER UNIQUE,
+                target_price REAL,
+                notify_below BOOLEAN DEFAULT 1,
+                active BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                triggered_at DATETIME,
+                FOREIGN KEY (ad_id) REFERENCES ads(id) ON DELETE CASCADE
+            )
+        """)
+
         # Create indexes for better query performance
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_search_id ON ads(search_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_status ON ads(status)")
@@ -112,6 +125,7 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_watching_found ON ads(watching, found_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_history_ad ON price_history(ad_id, checked_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_searches_active ON searches(active)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_alerts_active ON price_alerts(active, ad_id)")
 
         conn.commit()
 
@@ -560,3 +574,92 @@ def get_last_price_check(ad_id: int):
         """, (ad_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
+
+
+# ==================== PRICE ALERTS ====================
+
+def create_price_alert(ad_id: int, target_price: float, notify_below: bool = True) -> int:
+    """Create or update a price alert for an ad"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO price_alerts (ad_id, target_price, notify_below, active)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(ad_id) DO UPDATE SET
+                target_price = excluded.target_price,
+                notify_below = excluded.notify_below,
+                active = 1,
+                triggered_at = NULL
+        """, (ad_id, target_price, notify_below))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_price_alert(ad_id: int):
+    """Get price alert for an ad"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM price_alerts WHERE ad_id = ?
+        """, (ad_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_active_price_alerts():
+    """Get all active price alerts with ad info"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT pa.*, a.title, a.price, a.url, a.images
+            FROM price_alerts pa
+            JOIN ads a ON pa.ad_id = a.id
+            WHERE pa.active = 1 AND a.status = 'active'
+        """)
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def update_price_alert(ad_id: int, active: bool = None, triggered_at: str = None):
+    """Update price alert status"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        updates = []
+        params = []
+
+        if active is not None:
+            updates.append("active = ?")
+            params.append(active)
+
+        if triggered_at is not None:
+            updates.append("triggered_at = ?")
+            params.append(triggered_at)
+
+        if not updates:
+            return
+
+        params.append(ad_id)
+        cursor.execute(f"""
+            UPDATE price_alerts SET {', '.join(updates)} WHERE ad_id = ?
+        """, params)
+        conn.commit()
+
+
+def delete_price_alert(ad_id: int):
+    """Delete price alert for an ad"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM price_alerts WHERE ad_id = ?", (ad_id,))
+        conn.commit()
+
+
+def mark_alert_triggered(ad_id: int):
+    """Mark alert as triggered (won't fire again until reset)"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE price_alerts
+            SET triggered_at = CURRENT_TIMESTAMP
+            WHERE ad_id = ?
+        """, (ad_id,))
+        conn.commit()
