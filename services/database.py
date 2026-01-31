@@ -116,6 +116,16 @@ def init_db():
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id INTEGER PRIMARY KEY,
+                endpoint TEXT UNIQUE,
+                p256dh TEXT,
+                auth TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Create indexes for better query performance
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_search_id ON ads(search_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_status ON ads(status)")
@@ -126,6 +136,7 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_history_ad ON price_history(ad_id, checked_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_searches_active ON searches(active)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_alerts_active ON price_alerts(active, ad_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions(endpoint)")
 
         conn.commit()
 
@@ -662,4 +673,37 @@ def mark_alert_triggered(ad_id: int):
             SET triggered_at = CURRENT_TIMESTAMP
             WHERE ad_id = ?
         """, (ad_id,))
+        conn.commit()
+
+
+# ==================== PUSH SUBSCRIPTIONS ====================
+
+def save_push_subscription(endpoint: str, p256dh: str, auth: str):
+    """Save or update a push subscription"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO push_subscriptions (endpoint, p256dh, auth)
+            VALUES (?, ?, ?)
+            ON CONFLICT(endpoint) DO UPDATE SET
+                p256dh = excluded.p256dh,
+                auth = excluded.auth
+        """, (endpoint, p256dh, auth))
+        conn.commit()
+
+
+def get_all_push_subscriptions():
+    """Get all push subscriptions for sending notifications"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT endpoint, p256dh, auth FROM push_subscriptions")
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def delete_push_subscription(endpoint: str):
+    """Delete a push subscription (e.g., when it's invalid)"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
         conn.commit()

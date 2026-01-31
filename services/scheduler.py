@@ -14,7 +14,10 @@ from services.database import (
 from services.scraper import OlxScraper, filter_urls_by_keywords
 from services.logger import get_logger, get_memory_logs, clear_memory_logs
 from services.exceptions import ScraperError
-from services.notifications import check_price_alert_trigger, notify_price_alert
+from services.notifications import (
+    check_price_alert_trigger, notify_price_alert,
+    notify_price_drop, notify_cheap_ad, is_price_drop, is_cheap_ad
+)
 from models import Search, Ad
 
 
@@ -202,6 +205,12 @@ async def job_search_new_ads_async():
                     total_new += 1
                     add_log(f"  + Novo anúncio: {ad.title[:50]}...")
 
+                    # Notify if price <= 150
+                    if is_cheap_ad(ad.price):
+                        first_image = ad.images[0] if ad.images else None
+                        notify_cheap_ad(ad.title, ad.price, ad.url, first_image)
+                        add_log(f"  Notificação enviada: preço baixo R$ {ad.price}", "info")
+
         add_log(f"Busca finalizada. {total_new} novos anúncios salvos.", "success")
         task_results['search'] = {'success': True, 'total_new': total_new}
     except Exception as e:
@@ -261,6 +270,12 @@ async def job_check_prices_async():
                 update_ad_price(ad.id, current_price)
                 add_log(f"  Preço alterado: {ad.title[:30]}... ({last_price} -> {current_price})", "info")
                 price_changes += 1
+
+                # Notify if price dropped (watching ads)
+                if is_price_drop(last_price, current_price):
+                    first_image = ad.images[0] if ad.images else None
+                    notify_price_drop(ad.title, last_price, current_price, ad.url, first_image)
+                    add_log(f"  Notificação enviada: preço baixou!", "info")
             else:
                 add_price_history(ad.id, current_price)
 

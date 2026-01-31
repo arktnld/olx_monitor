@@ -1,7 +1,10 @@
 from pathlib import Path
 from nicegui import ui, app
-from services.database import init_db
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from services.database import init_db, save_push_subscription
 from services.scheduler import start_scheduler, stop_scheduler
+from services.notifications import get_vapid_public_key
 from components.navbar import create_navbar
 from pages.home import HomePage
 from pages.watching import WatchingPage
@@ -35,7 +38,82 @@ ui.add_head_html('''
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="OLX Monitor">
 <script>
-if ('serviceWorker' in navigator) {
+// Service Worker and Push Notifications
+async function setupPushNotifications() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        console.log('Push notifications not supported');
+        return;
+    }
+
+    try {
+        // Register service worker
+        const registration = await navigator.serviceWorker.register('/sw.js');
+        console.log('Service Worker registered');
+
+        // Check if already subscribed
+        let subscription = await registration.pushManager.getSubscription();
+
+        if (!subscription) {
+            // Get VAPID public key from server
+            const response = await fetch('/api/vapid-public-key');
+            const { publicKey } = await response.json();
+
+            // Convert base64 to Uint8Array
+            const padding = '='.repeat((4 - publicKey.length % 4) % 4);
+            const base64 = (publicKey + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const applicationServerKey = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) {
+                applicationServerKey[i] = rawData.charCodeAt(i);
+            }
+
+            // Subscribe to push
+            subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: applicationServerKey
+            });
+
+            // Send subscription to server
+            await fetch('/api/push-subscription', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subscription: subscription.toJSON() })
+            });
+
+            console.log('Push subscription saved');
+        }
+    } catch (error) {
+        console.error('Push notification setup failed:', error);
+    }
+}
+
+// Request notification permission on user interaction
+window.requestNotificationPermission = async function() {
+    if (!('Notification' in window)) {
+        alert('Este navegador não suporta notificações');
+        return false;
+    }
+
+    if (Notification.permission === 'granted') {
+        await setupPushNotifications();
+        return true;
+    }
+
+    if (Notification.permission !== 'denied') {
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+            await setupPushNotifications();
+            return true;
+        }
+    }
+
+    return false;
+};
+
+// Auto-setup if permission already granted
+if ('Notification' in window && Notification.permission === 'granted') {
+    setupPushNotifications();
+} else if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js');
 }
 </script>
@@ -77,9 +155,39 @@ def logs_page():
     LogsPage().create()
 
 
+@app.get('/api/vapid-public-key')
+def api_vapid_public_key():
+    """Get the VAPID public key for push notifications"""
+    return JSONResponse({'publicKey': get_vapid_public_key()})
+
+
+@app.post('/api/push-subscription')
+async def api_push_subscription(request: Request):
+    """Save a push notification subscription"""
+    try:
+        data = await request.json()
+        subscription = data.get('subscription', {})
+
+        endpoint = subscription.get('endpoint')
+        keys = subscription.get('keys', {})
+        p256dh = keys.get('p256dh')
+        auth = keys.get('auth')
+
+        if not all([endpoint, p256dh, auth]):
+            return JSONResponse({'error': 'Missing subscription data'}, status_code=400)
+
+        save_push_subscription(endpoint, p256dh, auth)
+        return JSONResponse({'success': True})
+    except Exception as e:
+        return JSONResponse({'error': str(e)}, status_code=500)
+
+
 @app.on_startup
 def on_startup():
     start_scheduler()
+
+    # Generate VAPID keys on startup if they don't exist
+    get_vapid_public_key()
 
     # Baixar imagens dos anúncios acompanhados que ainda não têm imagens locais
     from services.images import download_watching_ads_images

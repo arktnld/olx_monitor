@@ -1,6 +1,52 @@
 from nicegui import ui
 
 
+def _nav_button_desktop(label: str, icon: str, path: str):
+    ui.button(label, icon=icon, on_click=lambda: ui.navigate.to(path)).props(
+        'flat dense no-caps'
+    ).classes('text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg px-3')
+
+
+def _nav_button_mobile(label: str, icon: str, path: str):
+    with ui.column().classes('items-center gap-0 cursor-pointer min-w-[60px]').on('click', lambda: ui.navigate.to(path)):
+        ui.icon(icon, size='sm').classes('text-gray-600')
+        ui.label(label).classes('text-xs text-gray-600')
+
+
+def _notification_button():
+    """Button to enable push notifications"""
+    btn = ui.button(icon='notifications').props('flat round dense')
+    btn.classes('text-gray-500 hover:text-amber-500')
+    btn.tooltip('Ativar notificações')
+
+    # Update button based on notification permission
+    btn.on('click', lambda: ui.run_javascript('''
+        (async () => {
+            if (!('Notification' in window)) {
+                alert('Este navegador não suporta notificações');
+                return;
+            }
+
+            if (Notification.permission === 'granted') {
+                alert('Notificações já estão ativadas!');
+                return;
+            }
+
+            if (Notification.permission === 'denied') {
+                alert('Notificações foram bloqueadas. Ative nas configurações do navegador.');
+                return;
+            }
+
+            const result = await window.requestNotificationPermission();
+            if (result) {
+                alert('Notificações ativadas com sucesso!');
+            } else {
+                alert('Não foi possível ativar notificações.');
+            }
+        })();
+    '''))
+
+
 def create_navbar():
     # CSS para responsividade
     ui.add_head_html('''
@@ -24,12 +70,15 @@ def create_navbar():
                 ui.label('OLX Monitor').classes('text-lg font-semibold text-gray-800')
 
             # Botões desktop
-            with ui.row().classes('gap-1 desktop-nav'):
+            with ui.row().classes('gap-1 desktop-nav items-center'):
                 _nav_button_desktop('Home', 'home', '/')
                 _nav_button_desktop('Acompanhando', 'visibility', '/watching')
                 _nav_button_desktop('Histórico', 'history', '/history')
                 _nav_button_desktop('Config', 'settings', '/config')
                 _nav_button_desktop('Logs', 'schedule', '/logs')
+
+                # Notification button
+                _notification_button()
 
     # Footer mobile
     with ui.footer().classes('bg-white border-t border-gray-200 mobile-nav'):
@@ -39,15 +88,3 @@ def create_navbar():
             _nav_button_mobile('Histórico', 'history', '/history')
             _nav_button_mobile('Config', 'settings', '/config')
             _nav_button_mobile('Logs', 'schedule', '/logs')
-
-
-def _nav_button_desktop(label: str, icon: str, path: str):
-    ui.button(label, icon=icon, on_click=lambda: ui.navigate.to(path)).props(
-        'flat dense no-caps'
-    ).classes('text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg px-3')
-
-
-def _nav_button_mobile(label: str, icon: str, path: str):
-    with ui.column().classes('items-center gap-0 cursor-pointer min-w-[60px]').on('click', lambda: ui.navigate.to(path)):
-        ui.icon(icon, size='sm').classes('text-gray-600')
-        ui.label(label).classes('text-xs text-gray-600')
