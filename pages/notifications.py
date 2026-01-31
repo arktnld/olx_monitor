@@ -215,9 +215,7 @@ class NotificationsPage:
                     # Data
                     ui.label(notif.get('sent_at', '')).classes('text-xs text-gray-400')
 
-                # Link externo (para no click event)
+                # Link externo (stop propagation para não abrir o modal)
                 if notif.get('url'):
-                    def open_external(e, u=notif['url']):
-                        e.stop_propagation = True
-                        ui.navigate.to(u, new_tab=True)
-                    ui.button(icon='open_in_new', on_click=open_external).props('flat round dense')
+                    btn = ui.button(icon='open_in_new').props('flat round dense')
+                    btn.on('click.stop', lambda u=notif['url']: ui.navigate.to(u, new_tab=True))
