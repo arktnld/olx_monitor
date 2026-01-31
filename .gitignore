@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Data (banco e imagens locais)
+data/
+*.db
+
+# Scripts locais
+run_prod.sh
+update.sh
+deploy.sh
+
+# Misc
+.env
+*.log
+TODO
