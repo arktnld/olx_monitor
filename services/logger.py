@@ -39,7 +39,7 @@ _memory_handler: Optional[MemoryHandler] = None
 
 def setup_logger(
     name: str = "olx_monitor",
-    level: int = logging.INFO,
+    level: int = logging.DEBUG,
     log_file: Optional[Path] = None,
     max_memory_records: int = 100
 ) -> logging.Logger:

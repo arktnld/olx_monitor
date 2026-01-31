@@ -145,8 +145,9 @@ class TestSendPushNotification:
 class TestNotifyPriceDrop:
     """Tests for price drop notification formatting"""
 
+    @patch('services.notifications.save_notification')
     @patch('services.notifications.send_push_notification')
-    def test_formats_price_drop_notification_correctly(self, mock_send):
+    def test_formats_price_drop_notification_correctly(self, mock_send, mock_save):
         """Should create notification with old and new prices in body"""
         from services.notifications import notify_price_drop
 
@@ -162,6 +163,7 @@ class TestNotifyPriceDrop:
 
         assert result == 1
         mock_send.assert_called_once()
+        mock_save.assert_called_once()
 
         call_kwargs = mock_send.call_args.kwargs
         assert 'Preço baixou' in call_kwargs['title']
@@ -173,8 +175,9 @@ class TestNotifyPriceDrop:
 class TestNotifyCheapAd:
     """Tests for cheap ad notification formatting"""
 
+    @patch('services.notifications.save_notification')
     @patch('services.notifications.send_push_notification')
-    def test_formats_cheap_ad_notification_correctly(self, mock_send):
+    def test_formats_cheap_ad_notification_correctly(self, mock_send, mock_save):
         """Should create notification with price in title"""
         from services.notifications import notify_cheap_ad
 
@@ -188,6 +191,7 @@ class TestNotifyCheapAd:
 
         assert result == 1
         mock_send.assert_called_once()
+        mock_save.assert_called_once()
 
         call_kwargs = mock_send.call_args.kwargs
         assert 'R$ 50,00' in call_kwargs['title']

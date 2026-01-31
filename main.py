@@ -11,6 +11,7 @@ from pages.watching import WatchingPage
 from pages.history import HistoryPage
 from pages.config import ConfigPage
 from pages.logs import LogsPage
+from pages.notifications import NotificationsPage
 
 
 init_db()
@@ -153,6 +154,12 @@ def config_page():
 def logs_page():
     create_navbar()
     LogsPage().create()
+
+
+@ui.page('/notifications')
+def notifications_page():
+    create_navbar()
+    NotificationsPage().create()
 
 
 @app.get('/api/vapid-public-key')

@@ -18,7 +18,6 @@ class HomePage:
         self.current_filters = {}
         self.tab_buttons = {}
         self.update_button = None
-        self.update_result = None
         self.update_timer = None
         self.current_offset = 0
         self.total_count = 0
@@ -35,7 +34,7 @@ class HomePage:
             self.load_more_container = ui.element('div').classes('w-full flex justify-center py-4')
             self.refresh()
 
-    async def _on_update_click(self):
+    def _on_update_click(self):
         status = get_task_status('search')
         if status['running']:
             ui.notify('Busca já está em execução', type='warning')
@@ -47,16 +46,15 @@ class HomePage:
             ui.notify('Não foi possível iniciar a busca', type='negative')
             return
 
-        # Atualizar UI - mostrar spinner e texto "Buscando..."
+        # Atualizar UI - mostrar loading no botão
         self.update_button.disable()
         self.update_button.props('loading')
-        self.update_result.set_text('Buscando...')
-        self.update_result.classes(remove='text-green-600 text-red-600', add='text-gray-500')
+        self.update_button.text = 'Buscando...'
 
         # Criar timer para verificar progresso
         self.update_timer = ui.timer(1.0, self._check_update_progress)
 
-    async def _check_update_progress(self):
+    def _check_update_progress(self):
         status = get_task_status('search')
 
         if not status['running']:
@@ -65,27 +63,24 @@ class HomePage:
                 self.update_timer.cancel()
                 self.update_timer = None
 
-            self.update_button.enable()
             self.update_button.props(remove='loading')
+            self.update_button.enable()
 
             result = status['result']
             if result and result.get('success'):
                 total = result.get('total_new', 0)
                 if total > 0:
-                    self.update_result.set_text(f'+{total} novos anúncios!')
-                    self.update_result.classes(remove='text-gray-500', add='text-green-600')
+                    self.update_button.text = f'+{total} novos!'
                     ui.notify(f'{total} novos anúncios encontrados!', type='positive')
                 else:
-                    self.update_result.set_text('Nenhum anúncio novo')
-                    self.update_result.classes(remove='text-green-600', add='text-gray-500')
+                    self.update_button.text = 'Atualizar'
                     ui.notify('Nenhum anúncio novo encontrado', type='info')
 
                 # Atualizar a lista
                 self.refresh()
                 self._refresh_tabs()
             elif result:
-                self.update_result.set_text('Erro na busca')
-                self.update_result.classes(remove='text-gray-500', add='text-red-600')
+                self.update_button.text = 'Erro!'
                 ui.notify('Erro ao buscar anúncios', type='negative')
 
     def _refresh_tabs(self):
@@ -102,7 +97,6 @@ class HomePage:
             with ui.row().classes('w-full flex-wrap gap-2 items-center py-2'):
                 # Botão de atualizar
                 self._create_update_button()
-                self._create_update_status()
 
                 # Separador visual
                 ui.element('div').classes('w-px h-6 bg-gray-300 mx-1')
@@ -123,9 +117,6 @@ class HomePage:
             icon='refresh',
             on_click=self._on_update_click
         ).props('outline color=primary rounded')
-
-    def _create_update_status(self):
-        self.update_result = ui.label('').classes('text-sm text-gray-500')
 
     def _create_tab_button(self, search_id, name: str, count: int):
         is_selected = self.selected_search_id == search_id

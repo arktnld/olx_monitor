@@ -1,13 +1,16 @@
 """Push notifications service for OLX Monitor"""
 
 import json
+import base64
 from typing import Optional
 from pywebpush import webpush, WebPushException
-from py_vapid import Vapid
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 
 from services.database import (
     get_all_push_subscriptions, delete_push_subscription,
-    get_setting, set_setting
+    get_setting, set_setting, save_notification
 )
 from services.logger import get_logger
 
@@ -22,7 +25,7 @@ def get_or_create_vapid_keys() -> tuple[str, str]:
     Get existing VAPID keys or create new ones.
 
     Returns:
-        Tuple of (public_key, private_key) in base64 format
+        Tuple of (public_key_b64, private_key_b64) for pywebpush
     """
     public_key = get_setting('vapid_public_key')
     private_key = get_setting('vapid_private_key')
@@ -30,42 +33,28 @@ def get_or_create_vapid_keys() -> tuple[str, str]:
     if public_key and private_key:
         return public_key, private_key
 
-    # Generate new keys
+    # Generate new EC key pair
     logger.info("Generating new VAPID keys...")
-    vapid = Vapid()
-    vapid.generate_keys()
+    private_key_obj = ec.generate_private_key(ec.SECP256R1(), default_backend())
+    public_key_obj = private_key_obj.public_key()
 
-    # Get keys in the format webpush expects
-    public_key = vapid.public_key.public_bytes(
-        encoding=vapid.public_key.public_bytes.__self__.__class__.__module__.split('.')[0] == 'cryptography'
-        and __import__('cryptography.hazmat.primitives.serialization', fromlist=['Encoding']).Encoding.X962
-        or None,
-        format=__import__('cryptography.hazmat.primitives.serialization', fromlist=['PublicFormat']).PublicFormat.UncompressedPoint
-    )
-
-    import base64
-    from cryptography.hazmat.primitives import serialization
-
-    # Get raw public key bytes for applicationServerKey
-    public_key_bytes = vapid.public_key.public_bytes(
+    # Public key: raw bytes (65 bytes uncompressed) -> base64url
+    public_key_bytes = public_key_obj.public_bytes(
         encoding=serialization.Encoding.X962,
         format=serialization.PublicFormat.UncompressedPoint
     )
     public_key_b64 = base64.urlsafe_b64encode(public_key_bytes).decode('utf-8').rstrip('=')
 
-    # Get private key in PEM format for pywebpush
-    private_key_pem = vapid.private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption()
-    ).decode('utf-8')
+    # Private key: raw bytes (32 bytes) -> base64url
+    private_key_bytes = private_key_obj.private_numbers().private_value.to_bytes(32, 'big')
+    private_key_b64 = base64.urlsafe_b64encode(private_key_bytes).decode('utf-8').rstrip('=')
 
     # Save to database
     set_setting('vapid_public_key', public_key_b64)
-    set_setting('vapid_private_key', private_key_pem)
+    set_setting('vapid_private_key', private_key_b64)
 
     logger.info("VAPID keys generated and saved")
-    return public_key_b64, private_key_pem
+    return public_key_b64, private_key_b64
 
 
 def get_vapid_public_key() -> str:
@@ -148,27 +137,18 @@ def notify_price_drop(
     old_price: str,
     new_price: str,
     ad_url: str,
-    image_url: Optional[str] = None
+    image_url: Optional[str] = None,
+    ad_id: int = None
 ) -> int:
     """
     Send notification when a watched ad's price drops.
-
-    Args:
-        ad_title: Title of the ad
-        old_price: Previous price
-        new_price: New (lower) price
-        ad_url: URL of the ad
-        image_url: First image of the ad
-
-    Returns:
-        Number of notifications sent
     """
     title = "Preço baixou!"
     body = f"{ad_title[:50]}\nR$ {old_price} → R$ {new_price}"
 
     logger.info(f"Price drop notification: {ad_title} - {old_price} -> {new_price}")
 
-    return send_push_notification(
+    sent = send_push_notification(
         title=title,
         body=body,
         url=ad_url,
@@ -176,31 +156,37 @@ def notify_price_drop(
         image=image_url
     )
 
+    save_notification(
+        notification_type="price_drop",
+        title=ad_title,
+        price=new_price,
+        old_price=old_price,
+        url=ad_url,
+        ad_id=ad_id,
+        image=image_url,
+        success=sent > 0
+    )
+
+    return sent
+
 
 def notify_cheap_ad(
     ad_title: str,
     price: str,
     ad_url: str,
-    image_url: Optional[str] = None
+    image_url: Optional[str] = None,
+    ad_id: int = None,
+    search_name: str = None
 ) -> int:
     """
     Send notification when a new ad is found with price <= threshold.
-
-    Args:
-        ad_title: Title of the ad
-        price: Price of the ad
-        ad_url: URL of the ad
-        image_url: First image of the ad
-
-    Returns:
-        Number of notifications sent
     """
     title = f"Novo anúncio por R$ {price}!"
     body = ad_title[:80]
 
     logger.info(f"Cheap ad notification: {ad_title} - R$ {price}")
 
-    return send_push_notification(
+    sent = send_push_notification(
         title=title,
         body=body,
         url=ad_url,
@@ -208,39 +194,56 @@ def notify_cheap_ad(
         image=image_url
     )
 
+    save_notification(
+        notification_type="cheap_ad",
+        title=ad_title,
+        price=price,
+        url=ad_url,
+        ad_id=ad_id,
+        image=image_url,
+        search_name=search_name,
+        success=sent > 0
+    )
+
+    return sent
+
 
 def notify_price_alert(
     ad_title: str,
     current_price: str,
     target_price: float,
     ad_url: str,
-    image_url: Optional[str] = None
+    image_url: Optional[str] = None,
+    ad_id: int = None
 ) -> int:
     """
     Send notification when price alert is triggered.
-
-    Args:
-        ad_title: Title of the ad
-        current_price: Current price
-        target_price: Target price that was set
-        ad_url: URL of the ad
-        image_url: First image of the ad
-
-    Returns:
-        Number of notifications sent
     """
     title = "Alerta de Preço Atingido!"
     body = f"{ad_title[:50]}\nR$ {current_price} (alvo: R$ {target_price:.2f})"
 
     logger.info(f"Price alert notification: {ad_title} - R$ {current_price} <= R$ {target_price}")
 
-    return send_push_notification(
+    sent = send_push_notification(
         title=title,
         body=body,
         url=ad_url,
         tag=f"price-alert-{hash(ad_url) % 10000}",
         image=image_url
     )
+
+    save_notification(
+        notification_type="price_alert",
+        title=ad_title,
+        price=current_price,
+        target_price=target_price,
+        url=ad_url,
+        ad_id=ad_id,
+        image=image_url,
+        success=sent > 0
+    )
+
+    return sent
 
 
 def check_price_alert_trigger(
