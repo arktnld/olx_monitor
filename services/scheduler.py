@@ -1,5 +1,4 @@
 import asyncio
-import time
 import threading
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -7,14 +6,17 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from services.database import (
-    get_active_searches, ad_exists, create_ad, get_watching_ads,
+    get_active_searches, create_ad, get_watching_ads,
     add_price_history, update_ad_price, get_last_price_check,
     get_ads_to_check, update_ad_status, get_setting, get_existing_urls
 )
 from services.scraper import OlxScraper, filter_urls_by_keywords
+from services.logger import get_logger, get_memory_logs, clear_memory_logs
+from services.exceptions import ScraperError
 from models import Search, Ad
 
 
+sched_logger = get_logger("olx_monitor.scheduler")
 scheduler = BackgroundScheduler()
 scraper = OlxScraper()
 
@@ -38,12 +40,16 @@ task_results = {
 
 
 def add_log(message: str, level: str = "info"):
+    """Add log entry to memory and logging system"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = {"timestamp": timestamp, "level": level, "message": message}
     logs.insert(0, log_entry)
     if len(logs) > MAX_LOGS:
         logs.pop()
-    print(f"[{timestamp}] [{level.upper()}] {message}")
+
+    # Also log via structured logger
+    log_method = getattr(sched_logger, level, sched_logger.info)
+    log_method(message)
 
 
 def get_logs():
@@ -124,8 +130,11 @@ async def job_search_new_ads_async():
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for result in results:
-                if isinstance(result, Exception):
-                    add_log(f"  Erro ao buscar anúncio: {result}", "error")
+                if isinstance(result, BaseException):
+                    if isinstance(result, ScraperError):
+                        add_log(f"  Erro ao buscar anúncio: {result}", "warning")
+                    else:
+                        add_log(f"  Erro inesperado: {result}", "error")
                     continue
 
                 url, ad = result
@@ -188,8 +197,11 @@ async def job_check_prices_async():
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for result in results:
-            if isinstance(result, Exception):
-                add_log(f"  Erro ao verificar preço: {result}", "error")
+            if isinstance(result, BaseException):
+                if isinstance(result, ScraperError):
+                    add_log(f"  Erro ao verificar preço: {result}", "warning")
+                else:
+                    add_log(f"  Erro inesperado: {result}", "error")
                 continue
 
             ad, current_price = result
@@ -249,8 +261,11 @@ async def job_check_ad_status_async():
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for result in results:
-            if isinstance(result, Exception):
-                add_log(f"  Erro ao verificar status: {result}", "error")
+            if isinstance(result, BaseException):
+                if isinstance(result, ScraperError):
+                    add_log(f"  Erro ao verificar status: {result}", "warning")
+                else:
+                    add_log(f"  Erro inesperado: {result}", "error")
                 continue
 
             ad_id, url, status = result

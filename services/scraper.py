@@ -3,9 +3,72 @@ import asyncio
 import requests
 import re
 import json
+import functools
 from bs4 import BeautifulSoup
-from typing import Optional
+from typing import Optional, Callable, TypeVar
 from models import Ad
+from services.logger import get_logger
+from services.exceptions import NetworkError, ParseError, RateLimitError, AdNotFoundError
+
+logger = get_logger("olx_monitor.scraper")
+
+T = TypeVar('T')
+
+
+def retry_with_backoff(
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    exceptions: tuple = (NetworkError, aiohttp.ClientError, requests.RequestException)
+):
+    """
+    Decorator for retry with exponential backoff.
+
+    Args:
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds (doubles each retry)
+        exceptions: Tuple of exceptions to catch and retry
+    """
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs) -> T:
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return await func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Attempt {attempt + 1}/{max_retries} failed: {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+            logger.error(f"All {max_retries} attempts failed. Last error: {last_exception}")
+            raise last_exception
+
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs) -> T:
+            import time
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Attempt {attempt + 1}/{max_retries} failed: {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+            logger.error(f"All {max_retries} attempts failed. Last error: {last_exception}")
+            raise last_exception
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        return sync_wrapper
+
+    return decorator
 
 
 class OlxScraper:
@@ -61,27 +124,46 @@ class OlxScraper:
         try:
             response = requests.get(search_url, headers=self.headers, timeout=30)
             if response.status_code != 200:
+                logger.warning(f"Failed to fetch search URL: status {response.status_code}")
                 return []
 
             return self._parse_ad_urls(response.content, category_patterns)
+        except requests.Timeout as e:
+            logger.error(f"Timeout fetching search URL {search_url}: {e}")
+            return []
+        except requests.RequestException as e:
+            logger.error(f"Network error fetching URLs: {e}")
+            return []
         except Exception as e:
-            print(f"Erro ao buscar URLs: {e}")
+            logger.exception(f"Unexpected error fetching URLs: {e}")
             return []
 
     def get_ad_info(self, url: str) -> Optional[Ad]:
         try:
             response = requests.get(url, headers=self.headers, timeout=30)
             return self._parse_ad_info(url, response.content)
+        except requests.Timeout as e:
+            logger.error(f"Timeout fetching ad {url}: {e}")
+            return None
+        except requests.RequestException as e:
+            logger.error(f"Network error fetching ad {url}: {e}")
+            return None
         except Exception as e:
-            print(f"Erro ao obter info do anúncio {url}: {e}")
+            logger.exception(f"Unexpected error fetching ad {url}: {e}")
             return None
 
     def get_current_price(self, url: str) -> Optional[str]:
         try:
             response = requests.get(url, headers=self.headers, timeout=30)
             return self._parse_price(response.content)
+        except requests.Timeout as e:
+            logger.error(f"Timeout checking price {url}: {e}")
+            return None
+        except requests.RequestException as e:
+            logger.error(f"Network error checking price {url}: {e}")
+            return None
         except Exception as e:
-            print(f"Erro ao verificar preço {url}: {e}")
+            logger.exception(f"Unexpected error checking price {url}: {e}")
             return None
 
     def check_ad_status(self, url: str) -> Optional[str]:
@@ -105,64 +187,84 @@ class OlxScraper:
             elif response.status_code in (404, 410):
                 return 'inactive'
             elif response.status_code in (401, 403):
-                print(f"{response.status_code} (proteção anti-bot) para {url}")
+                logger.warning(f"Rate limited ({response.status_code}) for {url}")
                 return None
             elif response.status_code >= 500:
-                print(f"Erro do servidor OLX (status {response.status_code}) para {url}")
+                logger.warning(f"Server error ({response.status_code}) for {url}")
                 return None
             else:
-                print(f"Status code inesperado {response.status_code} para {url}")
+                logger.warning(f"Unexpected status {response.status_code} for {url}")
                 return None
 
         except requests.Timeout:
-            print(f"Timeout ao verificar {url}")
+            logger.error(f"Timeout checking status {url}")
             return None
         except requests.RequestException as e:
-            print(f"Erro de rede ao verificar {url}: {e}")
+            logger.error(f"Network error checking status {url}: {e}")
             return None
         except Exception as e:
-            print(f"Erro inesperado ao verificar {url}: {e}")
+            logger.exception(f"Unexpected error checking status {url}: {e}")
             return None
 
     # ==================== ASYNC METHODS ====================
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0)
     async def get_ad_urls_async(self, search_url: str, category_patterns: list[str]) -> list[str]:
-        """Async version of get_ad_urls"""
+        """Async version of get_ad_urls with retry"""
         try:
             session = await self._get_session()
             async with session.get(search_url) as response:
                 if response.status != 200:
+                    logger.warning(f"Failed to fetch search URL: status {response.status}")
                     return []
                 content = await response.read()
                 return self._parse_ad_urls(content, category_patterns)
-        except Exception as e:
-            print(f"Erro ao buscar URLs: {e}")
-            return []
+        except asyncio.TimeoutError as e:
+            logger.error(f"Timeout fetching search URL {search_url}")
+            raise NetworkError(f"Timeout: {e}") from e
+        except aiohttp.ClientError as e:
+            logger.error(f"Network error fetching URLs: {e}")
+            raise NetworkError(str(e)) from e
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0)
     async def get_ad_info_async(self, url: str) -> Optional[Ad]:
-        """Async version of get_ad_info"""
+        """Async version of get_ad_info with retry"""
         try:
             session = await self._get_session()
             async with session.get(url) as response:
+                if response.status in (404, 410):
+                    raise AdNotFoundError(f"Ad not found: {url}")
+                if response.status in (401, 403):
+                    raise RateLimitError(f"Rate limited: {response.status}")
                 content = await response.read()
                 return self._parse_ad_info(url, content)
-        except Exception as e:
-            print(f"Erro ao obter info do anúncio {url}: {e}")
-            return None
+        except asyncio.TimeoutError as e:
+            logger.error(f"Timeout fetching ad {url}")
+            raise NetworkError(f"Timeout: {e}") from e
+        except aiohttp.ClientError as e:
+            logger.error(f"Network error fetching ad {url}: {e}")
+            raise NetworkError(str(e)) from e
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0)
     async def get_current_price_async(self, url: str) -> Optional[str]:
-        """Async version of get_current_price"""
+        """Async version of get_current_price with retry"""
         try:
             session = await self._get_session()
             async with session.get(url) as response:
+                if response.status in (404, 410):
+                    raise AdNotFoundError(f"Ad not found: {url}")
                 content = await response.read()
                 return self._parse_price(content)
-        except Exception as e:
-            print(f"Erro ao verificar preço {url}: {e}")
-            return None
+        except asyncio.TimeoutError as e:
+            logger.error(f"Timeout checking price {url}")
+            raise NetworkError(f"Timeout: {e}") from e
+        except aiohttp.ClientError as e:
+            logger.error(f"Network error checking price {url}: {e}")
+            raise NetworkError(str(e)) from e
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0)
     async def check_ad_status_async(self, url: str) -> Optional[str]:
-        """Async version of check_ad_status"""
+        """Async version of check_ad_status with retry"""
         try:
             session = await self._get_session()
             async with session.get(url, allow_redirects=True) as response:
@@ -175,47 +277,48 @@ class OlxScraper:
                 elif response.status in (404, 410):
                     return 'inactive'
                 elif response.status in (401, 403):
-                    print(f"{response.status} (proteção anti-bot) para {url}")
-                    return None
+                    logger.warning(f"Rate limited ({response.status}) for {url}")
+                    raise RateLimitError(f"Rate limited: {response.status}")
                 elif response.status >= 500:
-                    print(f"Erro do servidor OLX (status {response.status}) para {url}")
-                    return None
+                    logger.warning(f"Server error ({response.status}) for {url}")
+                    raise NetworkError(f"Server error: {response.status}")
                 else:
-                    print(f"Status code inesperado {response.status} para {url}")
+                    logger.warning(f"Unexpected status {response.status} for {url}")
                     return None
-        except asyncio.TimeoutError:
-            print(f"Timeout ao verificar {url}")
-            return None
+        except asyncio.TimeoutError as e:
+            logger.error(f"Timeout checking status {url}")
+            raise NetworkError(f"Timeout: {e}") from e
         except aiohttp.ClientError as e:
-            print(f"Erro de rede ao verificar {url}: {e}")
-            return None
-        except Exception as e:
-            print(f"Erro inesperado ao verificar {url}: {e}")
-            return None
+            logger.error(f"Network error checking status {url}: {e}")
+            raise NetworkError(str(e)) from e
 
     # ==================== PARSING HELPERS ====================
 
     def _parse_ad_urls(self, content: bytes, category_patterns: list[str]) -> list[str]:
         """Parse ad URLs from search page content"""
-        soup = BeautifulSoup(content, 'html.parser')
-        links = soup.find_all('a', href=True)
-        urls = []
+        try:
+            soup = BeautifulSoup(content, 'html.parser')
+            links = soup.find_all('a', href=True)
+            urls = []
 
-        for link in links:
-            url = link['href']
+            for link in links:
+                url = link['href']
 
-            if not re.search(r"https:\/\/(?:[a-z]{2}\.)?olx\.com\.br\/[\w\-\/]+-\d+", url):
-                continue
+                if not re.search(r"https:\/\/(?:[a-z]{2}\.)?olx\.com\.br\/[\w\-\/]+-\d+", url):
+                    continue
 
-            if not category_patterns:
-                urls.append(url)
-            else:
-                for pattern in category_patterns:
-                    if re.search(pattern, url):
-                        urls.append(url)
-                        break
+                if not category_patterns:
+                    urls.append(url)
+                else:
+                    for pattern in category_patterns:
+                        if re.search(pattern, url):
+                            urls.append(url)
+                            break
 
-        return list(set(urls))
+            return list(set(urls))
+        except Exception as e:
+            logger.error(f"Error parsing ad URLs: {e}")
+            raise ParseError(f"Failed to parse ad URLs: {e}") from e
 
     def _extract_json_data(self, soup, type_attr: str) -> dict:
         script = soup.find('script', type=type_attr)
@@ -241,6 +344,7 @@ class OlxScraper:
 
             data_layer = self._extract_data_layer(soup)
             if not data_layer:
+                logger.debug(f"No data layer found for {url}")
                 return None
 
             ad_detail = data_layer[0].get('page', {}).get('detail', {})
@@ -250,6 +354,7 @@ class OlxScraper:
             price = ad_detail.get("price", "")
 
             if not price or "página não foi encontrada" in str(price).lower():
+                logger.debug(f"Ad not found or invalid price for {url}")
                 return None
 
             state = ad_info.get("state", "")
@@ -282,7 +387,11 @@ class OlxScraper:
                 olx_pay=bool(olx_pay_data),
                 olx_delivery=bool(olx_delivery_data.get("enabled", False))
             )
-        except Exception:
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error for {url}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error parsing ad info for {url}: {e}")
             return None
 
     def _parse_price(self, content: bytes) -> Optional[str]:
@@ -301,7 +410,11 @@ class OlxScraper:
                 return None
 
             return price
-        except Exception:
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error parsing price: {e}")
             return None
 
 
