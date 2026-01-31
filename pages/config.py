@@ -1,10 +1,14 @@
 from nicegui import ui
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from urllib.parse import urlparse, parse_qs, urlencode
 from models import Search
 from services.database import (
     get_all_searches, create_search, update_search,
     delete_search, toggle_search_active,
     get_setting, set_setting
+)
+from services.validators import (
+    validate_olx_url, validate_zipcode, validate_search_name,
+    sanitize_cep, sanitize_text, ValidationError
 )
 
 
@@ -74,12 +78,13 @@ class ConfigPage:
                 ).props('outlined rounded mask="#####-###"').classes('w-48')
 
                 def save_cep():
-                    cep = cep_input.value.replace('-', '').replace(' ', '')
-                    if len(cep) == 8 and cep.isdigit():
+                    try:
+                        cep = sanitize_cep(cep_input.value)
+                        validate_zipcode(cep)
                         set_setting('delivery_zipcode', cep)
                         ui.notify('CEP salvo com sucesso!', type='positive')
-                    else:
-                        ui.notify('CEP inválido. Digite 8 números.', type='negative')
+                    except ValidationError as e:
+                        ui.notify(str(e), type='negative')
 
                 ui.button('Salvar', on_click=save_cep).props('color=primary rounded')
 
@@ -211,18 +216,21 @@ class ConfigPage:
         dialog.open()
 
     def _save_search(self, search_id, name, url, exclude_str, active, dialog):
-        exclude = [e.strip() for e in exclude_str.split('\n') if e.strip()]
+        # Sanitize and validate inputs
+        name = sanitize_text(name, max_length=100)
+        url = sanitize_text(url)
+        exclude = [sanitize_text(e, max_length=100) for e in exclude_str.split('\n') if e.strip()]
 
-        if not name:
-            ui.notify('Nome é obrigatório', type='negative')
+        try:
+            validate_search_name(name)
+        except ValidationError as e:
+            ui.notify(str(e), type='negative')
             return
 
-        if not url:
-            ui.notify('URL é obrigatória', type='negative')
-            return
-
-        if 'olx.com.br' not in url:
-            ui.notify('URL inválida. Use uma URL do OLX.', type='negative')
+        try:
+            validate_olx_url(url)
+        except ValidationError as e:
+            ui.notify(str(e), type='negative')
             return
 
         # Extrair base_url, query e categoria da URL
