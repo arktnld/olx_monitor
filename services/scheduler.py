@@ -96,9 +96,9 @@ def _handle_async_error(result) -> bool:
     return False
 
 
-def _save_new_ad(ad, search_id, cheap_threshold: float = None) -> None:
+def _save_new_ad(ad, search_id, cheap_threshold: float = None, search_name: str = None) -> None:
     """Save new ad and notify if cheap based on search threshold"""
-    create_ad(
+    ad_id = create_ad(
         url=ad.url, title=ad.title, price=ad.price, description=ad.description,
         state=ad.state, municipality=ad.municipality, neighbourhood=ad.neighbourhood,
         zipcode=ad.zipcode, seller=ad.seller, condition=ad.condition,
@@ -112,7 +112,7 @@ def _save_new_ad(ad, search_id, cheap_threshold: float = None) -> None:
     # Só notifica se tiver threshold configurado para essa busca
     if cheap_threshold and is_cheap_ad(ad.price, threshold=cheap_threshold):
         first_image = ad.images[0] if ad.images else None
-        notify_cheap_ad(ad.title, ad.price, ad.url, first_image)
+        notify_cheap_ad(ad.title, ad.price, ad.url, first_image, ad_id=ad_id, search_name=search_name)
         add_log(f"  Notificação enviada: preço baixo R$ {ad.price} (< R$ {cheap_threshold:.0f})", "info")
 
 
@@ -166,7 +166,7 @@ async def job_search_new_ads_async():
                     continue
                 _, ad = result
                 if ad:
-                    _save_new_ad(ad, search.id, search.cheap_threshold)
+                    _save_new_ad(ad, search.id, search.cheap_threshold, search.name)
                     total_new += 1
 
         add_log(f"Busca finalizada. {total_new} novos anúncios salvos.", "success")
@@ -223,7 +223,7 @@ async def job_check_prices_async():
 
                 if is_price_drop(last_price, current_price):
                     first_image = ad.images[0] if ad.images else None
-                    notify_price_drop(ad.title, last_price, current_price, ad.url, first_image)
+                    notify_price_drop(ad.title, last_price, current_price, ad.url, first_image, ad_id=ad.id)
                     add_log("  Notificação enviada: preço baixou!", "info")
 
         add_log(f"Verificação finalizada. {price_changes} alterações de preço.", "success")
