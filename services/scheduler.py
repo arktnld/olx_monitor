@@ -1,3 +1,4 @@
+import asyncio
 import time
 import threading
 from datetime import datetime
@@ -8,7 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from services.database import (
     get_active_searches, ad_exists, create_ad, get_watching_ads,
     add_price_history, update_ad_price, get_last_price_check,
-    get_ads_to_check, update_ad_status, get_setting
+    get_ads_to_check, update_ad_status, get_setting, get_existing_urls
 )
 from services.scraper import OlxScraper, filter_urls_by_keywords
 from models import Search, Ad
@@ -19,6 +20,9 @@ scraper = OlxScraper()
 
 logs = []
 MAX_LOGS = 100
+
+# Semaphore to limit concurrent requests
+MAX_CONCURRENT_REQUESTS = 5
 
 # Estado das tarefas em execução
 running_tasks = {
@@ -50,7 +54,32 @@ def clear_logs():
     logs.clear()
 
 
-def job_search_new_ads():
+async def _fetch_ad_info_with_semaphore(semaphore: asyncio.Semaphore, url: str) -> tuple[str, Ad | None]:
+    """Fetch ad info with semaphore to limit concurrency"""
+    async with semaphore:
+        ad = await scraper.get_ad_info_async(url)
+        await asyncio.sleep(1)  # Rate limiting
+        return url, ad
+
+
+async def _check_price_with_semaphore(semaphore: asyncio.Semaphore, ad: Ad) -> tuple[Ad, str | None]:
+    """Check price with semaphore to limit concurrency"""
+    async with semaphore:
+        price = await scraper.get_current_price_async(ad.url)
+        await asyncio.sleep(1)  # Rate limiting
+        return ad, price
+
+
+async def _check_status_with_semaphore(semaphore: asyncio.Semaphore, ad_id: int, url: str) -> tuple[int, str, str | None]:
+    """Check status with semaphore to limit concurrency"""
+    async with semaphore:
+        status = await scraper.check_ad_status_async(url)
+        await asyncio.sleep(0.5)  # Rate limiting
+        return ad_id, url, status
+
+
+async def job_search_new_ads_async():
+    """Async version of job_search_new_ads"""
     global running_tasks, task_results
 
     if running_tasks['search']:
@@ -64,29 +93,42 @@ def job_search_new_ads():
     try:
         searches = get_active_searches()
         total_new = 0
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
         for search_data in searches:
             search = Search.from_dict(search_data)
             add_log(f"Processando busca: {search.name}")
 
-            new_urls = set()
-
-            # Se não tem queries, usa string vazia para buscar categoria inteira
+            all_found_urls = []
             queries = search.queries if search.queries else ['']
 
+            # Collect URLs from all queries (can be parallelized)
             for query in queries:
                 search_url = scraper.build_search_url(search.base_url, query)
-                found_urls = scraper.get_ad_urls(search_url, search.categories)
+                found_urls = await scraper.get_ad_urls_async(search_url, search.categories)
                 filtered_urls = filter_urls_by_keywords(found_urls, search.exclude_keywords)
+                all_found_urls.extend(filtered_urls)
 
-                for url in filtered_urls:
-                    if not ad_exists(url):
-                        new_urls.add(url)
+            # Batch check which URLs already exist
+            all_found_urls = list(set(all_found_urls))
+            existing_urls = get_existing_urls(all_found_urls)
+            new_urls = [url for url in all_found_urls if url not in existing_urls]
 
             add_log(f"  {len(new_urls)} URLs novos encontrados para {search.name}")
 
-            for url in new_urls:
-                ad = scraper.get_ad_info(url)
+            if not new_urls:
+                continue
+
+            # Fetch ad info in parallel with semaphore
+            tasks = [_fetch_ad_info_with_semaphore(semaphore, url) for url in new_urls]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for result in results:
+                if isinstance(result, Exception):
+                    add_log(f"  Erro ao buscar anúncio: {result}", "error")
+                    continue
+
+                url, ad = result
                 if ad:
                     create_ad(
                         url=ad.url,
@@ -111,8 +153,6 @@ def job_search_new_ads():
                     total_new += 1
                     add_log(f"  + Novo anúncio: {ad.title[:50]}...")
 
-                time.sleep(2)
-
         add_log(f"Busca finalizada. {total_new} novos anúncios salvos.", "success")
         task_results['search'] = {'success': True, 'total_new': total_new}
     except Exception as e:
@@ -120,9 +160,11 @@ def job_search_new_ads():
         task_results['search'] = {'success': False, 'error': str(e)}
     finally:
         running_tasks['search'] = False
+        await scraper.close()
 
 
-def job_check_prices():
+async def job_check_prices_async():
+    """Async version of job_check_prices"""
     global running_tasks, task_results
 
     if running_tasks['price_check']:
@@ -136,10 +178,21 @@ def job_check_prices():
     try:
         watching_ads = get_watching_ads()
         price_changes = 0
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
-        for ad_data in watching_ads:
-            ad = Ad.from_dict(ad_data)
-            current_price = scraper.get_current_price(ad.url)
+        # Convert to Ad objects
+        ads = [Ad.from_dict(ad_data) for ad_data in watching_ads]
+
+        # Check prices in parallel
+        tasks = [_check_price_with_semaphore(semaphore, ad) for ad in ads]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, Exception):
+                add_log(f"  Erro ao verificar preço: {result}", "error")
+                continue
+
+            ad, current_price = result
 
             if current_price is None:
                 add_log(f"  Não foi possível verificar preço: {ad.title[:30]}...", "warning")
@@ -159,8 +212,6 @@ def job_check_prices():
             else:
                 add_price_history(ad.id, current_price)
 
-            time.sleep(2)
-
         add_log(f"Verificação finalizada. {price_changes} alterações de preço.", "success")
         task_results['price_check'] = {'success': True, 'price_changes': price_changes}
     except Exception as e:
@@ -168,10 +219,11 @@ def job_check_prices():
         task_results['price_check'] = {'success': False, 'error': str(e)}
     finally:
         running_tasks['price_check'] = False
+        await scraper.close()
 
 
-def job_check_ad_status():
-    """Check if ads are still active (runs daily at midnight)"""
+async def job_check_ad_status_async():
+    """Async version of job_check_ad_status"""
     global running_tasks, task_results
 
     if running_tasks['status_check']:
@@ -185,21 +237,28 @@ def job_check_ad_status():
     try:
         ads_to_check = get_ads_to_check()
         deactivated = 0
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
         add_log(f"  {len(ads_to_check)} anúncios para verificar")
 
-        for ad_data in ads_to_check:
-            ad_id = ad_data['id']
-            url = ad_data['url']
+        # Check status in parallel
+        tasks = [
+            _check_status_with_semaphore(semaphore, ad_data['id'], ad_data['url'])
+            for ad_data in ads_to_check
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            status = scraper.check_ad_status(url)
+        for result in results:
+            if isinstance(result, Exception):
+                add_log(f"  Erro ao verificar status: {result}", "error")
+                continue
+
+            ad_id, url, status = result
 
             if status == 'inactive':
                 update_ad_status(ad_id, 'inactive')
                 deactivated += 1
                 add_log(f"  Anúncio desativado: {url[:50]}...", "warning")
-
-            time.sleep(1)  # Rate limiting
 
         add_log(f"Verificação de status finalizada. {deactivated} anúncios desativados.", "success")
         task_results['status_check'] = {'success': True, 'deactivated': deactivated}
@@ -208,16 +267,30 @@ def job_check_ad_status():
         task_results['status_check'] = {'success': False, 'error': str(e)}
     finally:
         running_tasks['status_check'] = False
+        await scraper.close()
+
+
+def job_search_new_ads():
+    """Wrapper to run async job in sync context"""
+    asyncio.run(job_search_new_ads_async())
+
+
+def job_check_prices():
+    """Wrapper to run async job in sync context"""
+    asyncio.run(job_check_prices_async())
+
+
+def job_check_ad_status():
+    """Wrapper to run async job in sync context"""
+    asyncio.run(job_check_ad_status_async())
 
 
 def start_scheduler():
     if not scheduler.running:
-        # Ler intervalos do banco ou usar defaults
         search_interval = int(get_setting('search_interval', '20') or '20')
         price_interval = int(get_setting('price_interval', '20') or '20')
         status_hour_str = get_setting('status_check_hour', '00:00') or '00:00'
 
-        # Parsear hora do status check
         try:
             hour, minute = map(int, status_hour_str.split(':'))
         except ValueError:

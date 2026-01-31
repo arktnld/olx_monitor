@@ -103,6 +103,16 @@ def init_db():
             )
         """)
 
+        # Create indexes for better query performance
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_search_id ON ads(search_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_status ON ads(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_watching ON ads(watching)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_found_at ON ads(found_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_status_found ON ads(status, found_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ads_watching_found ON ads(watching, found_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_history_ad ON price_history(ad_id, checked_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_searches_active ON searches(active)")
+
         conn.commit()
 
 
@@ -280,6 +290,17 @@ def ad_exists(url: str) -> bool:
         cursor = conn.cursor()
         cursor.execute("SELECT 1 FROM ads WHERE url = ?", (url,))
         return cursor.fetchone() is not None
+
+
+def get_existing_urls(urls: list[str]) -> set[str]:
+    """Batch check which URLs already exist in database"""
+    if not urls:
+        return set()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        placeholders = ','.join('?' * len(urls))
+        cursor.execute(f"SELECT url FROM ads WHERE url IN ({placeholders})", urls)
+        return {row['url'] for row in cursor.fetchall()}
 
 
 def create_ad(url: str, title: str, price: str, description: str, state: str,
