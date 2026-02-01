@@ -6,6 +6,7 @@ from services.database import (
     delete_search, toggle_search_active,
     get_setting, set_setting
 )
+from services.scheduler import reschedule_jobs
 from services.validators import (
     validate_olx_url, validate_zipcode, validate_search_name,
     sanitize_cep, sanitize_text, ValidationError
@@ -87,6 +88,49 @@ class ConfigPage:
                         ui.notify(str(e), type='negative')
 
                 ui.button('Salvar', on_click=save_cep).props('color=primary rounded')
+
+            ui.separator().classes('my-4')
+            ui.label('Intervalos de Atualização').classes('font-semibold mb-2')
+
+            current_search = get_setting('search_interval', '20')
+            current_price = get_setting('price_interval', '20')
+            current_status = get_setting('status_check_hour', '00:00')
+
+            with ui.row().classes('items-end gap-4 flex-wrap'):
+                search_input = ui.number(
+                    'Buscar novos (min)',
+                    value=int(current_search or 20),
+                    min=5, max=120
+                ).props('outlined rounded').classes('w-40')
+
+                price_input = ui.number(
+                    'Checar preços (min)',
+                    value=int(current_price or 20),
+                    min=5, max=120
+                ).props('outlined rounded').classes('w-40')
+
+                status_input = ui.input(
+                    'Checar status (hora)',
+                    value=current_status or '00:00',
+                    placeholder='HH:MM'
+                ).props('outlined rounded mask="##:##"').classes('w-32')
+
+                def save_intervals():
+                    search_val = int(search_input.value) if search_input.value else 20
+                    price_val = int(price_input.value) if price_input.value else 20
+                    status_val = status_input.value or '00:00'
+
+                    if search_val < 5 or price_val < 5:
+                        ui.notify('Intervalo mínimo é 5 minutos', type='negative')
+                        return
+
+                    set_setting('search_interval', str(search_val))
+                    set_setting('price_interval', str(price_val))
+                    set_setting('status_check_hour', status_val)
+                    reschedule_jobs()
+                    ui.notify('Intervalos salvos!', type='positive')
+
+                ui.button('Salvar', on_click=save_intervals).props('color=primary rounded')
 
     def refresh(self):
         if self.container:

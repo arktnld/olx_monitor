@@ -1,23 +1,23 @@
 # Cobertura de Testes - OLX Monitor
 
-> Última atualização: 2026-01-31
+> Última atualização: 2026-02-01
 
 ## Resumo
 
 | Total de Testes | Tempo de Execução | Cobertura Geral |
 |-----------------|-------------------|-----------------|
-| 158 | ~4.00s | 69% |
+| 158 | ~4.07s | 69% |
 
 ## Cobertura por Módulo
 
 | Módulo | Cobertura | Status | Importância |
 |--------|-----------|--------|-------------|
-| scheduler.py | 73% | 🟡 | 🔴 Crítico - coração da aplicação |
+| scheduler.py | 69% | 🟡 | 🔴 Crítico - coração da aplicação |
 | scraper.py | 53% | 🟡 | 🔴 Crítico - parsing do OLX |
 | database.py | 69% | 🟡 | 🟡 Médio - queries e persistência |
 | validators.py | 84% | ✅ | 🟡 Médio - validação de inputs |
 | notifications.py | 73% | 🟡 | 🟡 Médio - push notifications |
-| logger.py | 73% | 🟡 | 🟢 Baixo - logging |
+| logger.py | 75% | ✅ | 🟢 Baixo - logging |
 | exceptions.py | 100% | ✅ | 🟢 Baixo - exceções customizadas |
 | delivery.py | 96% | ✅ | 🟢 Baixo - feature secundária |
 | images.py | 75% | ✅ | 🟢 Baixo - download de imagens |

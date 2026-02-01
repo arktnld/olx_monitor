@@ -1,7 +1,9 @@
 from nicegui import ui
 from models import Ad, PriceHistory, calculate_price_variation
-from services.database import get_watching_ads, get_price_history, get_distinct_states
+from services.database import get_watching_ads, get_price_history, get_distinct_states, create_ad, toggle_ad_watching
 from services.scheduler import run_price_check_now, get_task_status
+from services.scraper import OlxScraper
+from services.validators import validate_olx_url, ValidationError
 from components.ad_modal import AdModal
 
 
@@ -21,8 +23,10 @@ class WatchingPage:
         with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-4'):
             with ui.row().classes('w-full justify-between items-center'):
                 ui.label('Acompanhando').classes('text-2xl font-bold')
-                self.button_container = ui.element('div')
-                self._rebuild_button()
+                with ui.row().classes('gap-2'):
+                    ui.button('+ Adicionar URL', icon='add_link', on_click=self._show_add_url_dialog).props('outline color=primary rounded')
+                    self.button_container = ui.element('div')
+                    self._rebuild_button()
             self._create_filters()
             self.container = ui.element('div').classes('w-full')
             self.refresh()
@@ -93,6 +97,66 @@ class WatchingPage:
         self.max_input.set_value(None)
         self.state_select.set_value(None)
         self.refresh()
+
+    def _show_add_url_dialog(self):
+        with ui.dialog() as dialog, ui.card().classes('w-full max-w-md rounded-xl'):
+            ui.label('Adicionar Anúncio').classes('text-xl font-bold mb-4')
+
+            url_input = ui.input(
+                'URL do anúncio OLX',
+                placeholder='https://www.olx.com.br/...'
+            ).props('outlined rounded').classes('w-full')
+
+            status_label = ui.label('').classes('text-sm text-gray-500')
+
+            async def add_url():
+                url = url_input.value.strip()
+                if not url:
+                    ui.notify('Cole a URL do anúncio', type='warning')
+                    return
+
+                try:
+                    validate_olx_url(url)
+                except ValidationError as e:
+                    ui.notify(str(e), type='negative')
+                    return
+
+                status_label.set_text('Buscando informações do anúncio...')
+
+                try:
+                    scraper = OlxScraper()
+                    ad = await scraper.get_ad_info_async(url)
+                    await scraper.close()
+
+                    if not ad:
+                        ui.notify('Não foi possível obter informações do anúncio', type='negative')
+                        status_label.set_text('')
+                        return
+
+                    ad_id = create_ad(
+                        url=ad.url, title=ad.title, price=ad.price, description=ad.description,
+                        state=ad.state, municipality=ad.municipality, neighbourhood=ad.neighbourhood,
+                        zipcode=ad.zipcode, seller=ad.seller, condition=ad.condition,
+                        published_at=ad.published_at, main_category=ad.main_category,
+                        sub_category=ad.sub_category, hobbie_type=ad.hobbie_type,
+                        images=ad.images, olx_pay=ad.olx_pay, olx_delivery=ad.olx_delivery,
+                        search_id=0
+                    )
+
+                    toggle_ad_watching(ad_id)
+
+                    ui.notify(f'Anúncio adicionado: {ad.title[:50]}...', type='positive')
+                    dialog.close()
+                    self.refresh()
+                except Exception as e:
+                    ui.notify(f'Erro: {e}', type='negative')
+                    status_label.set_text('')
+
+            with ui.row().classes('w-full justify-end gap-2 mt-4'):
+                ui.button('Cancelar', on_click=dialog.close).props('flat')
+                ui.button('Adicionar', on_click=add_url).props('color=primary rounded')
+
+        dialog.open()
 
     def _on_check_click(self):
         status = get_task_status('price_check')
