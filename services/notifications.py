@@ -137,8 +137,8 @@ def notify_price_drop(
     old_price: str,
     new_price: str,
     ad_url: str,
-    image_url: Optional[str] = None,
-    ad_id: int = None
+    image_url: str | None = None,
+    ad_id: int | None = None
 ) -> int:
     """
     Send notification when a watched ad's price drops.
@@ -175,8 +175,8 @@ def notify_cheap_ad(
     price: str,
     ad_url: str,
     image_url: Optional[str] = None,
-    ad_id: int = None,
-    search_name: str = None
+    ad_id: int | None = None,
+    search_name: str | None = None
 ) -> int:
     """
     Send notification when a new ad is found with price <= threshold.
@@ -213,8 +213,8 @@ def notify_price_alert(
     current_price: str,
     target_price: float,
     ad_url: str,
-    image_url: Optional[str] = None,
-    ad_id: int = None
+    image_url: str | None = None,
+    ad_id: int | None = None
 ) -> int:
     """
     Send notification when price alert is triggered.
