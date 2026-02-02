@@ -6,7 +6,7 @@
 
 | Total de Testes | Tempo de Execução | Cobertura Geral |
 |-----------------|-------------------|-----------------|
-| 158 | ~4.07s | 69% |
+| 158 | ~3.56s | 69% |
 
 ## Cobertura por Módulo
 

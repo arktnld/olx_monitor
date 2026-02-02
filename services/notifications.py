@@ -89,7 +89,7 @@ def send_push_notification(
         logger.debug("No push subscriptions found")
         return 0
 
-    _, private_key = get_or_create_vapid_keys()
+    public_key, private_key = get_or_create_vapid_keys()
 
     payload = json.dumps({
         'title': title,
@@ -137,8 +137,8 @@ def notify_price_drop(
     old_price: str,
     new_price: str,
     ad_url: str,
-    image_url: str,
-    ad_id: int
+    image_url: Optional[str] = None,
+    ad_id: int = None
 ) -> int:
     """
     Send notification when a watched ad's price drops.
@@ -173,10 +173,10 @@ def notify_price_drop(
 def notify_cheap_ad(
     ad_title: str,
     price: str,
-    ad_id: int,
-    search_name: str,
-    image_url: str,
-    ad_url: str
+    ad_url: str,
+    image_url: Optional[str] = None,
+    ad_id: int = None,
+    search_name: str = None
 ) -> int:
     """
     Send notification when a new ad is found with price <= threshold.
@@ -213,8 +213,8 @@ def notify_price_alert(
     current_price: str,
     target_price: float,
     ad_url: str,
-    image_url: str,
-    ad_id: int
+    image_url: Optional[str] = None,
+    ad_id: int = None
 ) -> int:
     """
     Send notification when price alert is triggered.
